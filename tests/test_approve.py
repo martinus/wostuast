@@ -25,7 +25,7 @@ import pytest
 
 import conftest
 from conftest import ROOT, STAND_IN, event
-from test_serve import post
+from test_serve import held_when_answered, post
 
 ASK = "0123456789abcdef"
 
@@ -86,6 +86,17 @@ def test_a_yes_goes_to_the_dialogs_own_hook_and_never_to_the_pane(ws, asking):
     daemon.store.refresh()
     session = daemon.store.sessions["s1"]
     assert (session.state, session.last_event) == ("working", "allowed from the page")
+
+
+def test_a_yes_is_answered_only_once_the_session_is_given_back(ws, asking, monkeypatch):
+    """As a send's (#658): held while its answer went out, the next send
+    on it was refused."""
+    daemon, base, seen, key, hook, took = asking
+    held = held_when_answered(ws, daemon, monkeypatch)
+    status, body = post(base + "/api/session/s1/approve", {"key": key},
+                        token=daemon.token)
+    assert status == 200 and body["done"], body
+    assert held == [[]], held
 
 
 def test_a_yes_for_another_dialog_or_without_the_token_writes_nothing(ws, asking):

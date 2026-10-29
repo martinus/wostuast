@@ -2355,6 +2355,17 @@ def test_a_decline_is_escape_then_the_reason_once_the_dialog_closed(
     assert session.state == "done" and session.permission is None
 
 
+def test_a_no_is_answered_only_once_the_session_is_given_back(ws, declining, monkeypatch):
+    """As a send's (#658): held while its answer went out, the next send
+    on it was refused."""
+    daemon, base, seen, closes, key, _ = declining
+    held = held_when_answered(ws, daemon, monkeypatch)
+    status, body = post(base + "/api/session/s1/decline", {"key": key, "reason": "no"},
+                        token=daemon.token)
+    assert status == 200 and body["sent"], body
+    assert held == [[]], held
+
+
 def test_a_reason_is_never_typed_into_a_dialog_not_seen_to_close(ws, declining):
     """The cursor starts on "1. Yes" and a digit picks an option, so a
     reason typed into a dialog still up can approve what was declined. An
@@ -3105,6 +3116,33 @@ def watched(ws, served, monkeypatch, transcript_file):
                           transcript_path=str(transcript)))
     daemon.store.refresh()
     return daemon, base, seen, lands
+
+
+def held_when_answered(ws, daemon, monkeypatch):
+    """What the daemon still held for typing at each answer it wrote."""
+    held = []
+    real = ws.Serving.reply_json
+
+    def spy(self, data, code=200):
+        held.append(sorted(daemon.typing | daemon.declining))
+        return real(self, data, code)
+    monkeypatch.setattr(ws.Serving, "reply_json", spy)
+    return held
+
+
+def test_a_send_is_answered_only_once_the_session_is_given_back(ws, watched, monkeypatch):
+    """The answer went out while the session was still held (#658): a
+    client that sent again on it was refused as "already being typed", and
+    CI went red on it under Python 3.10."""
+    daemon, base, seen, lands = watched
+    held = held_when_answered(ws, daemon, monkeypatch)
+    status, body = post(f"{base}/api/session/s1/send", {"text": "hello"},
+                        token=daemon.token)
+    assert status == 200 and body["done"], body
+    assert held == [[]], held
+    status, body = post(f"{base}/api/session/s1/send", {"text": "hello again"},
+                        token=daemon.token)
+    assert status == 200, body
 
 
 def test_a_send_claude_code_never_took_is_said_and_given_back(ws, watched):

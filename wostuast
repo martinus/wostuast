@@ -11230,8 +11230,9 @@ class Serving:
 
 
     def give_yes(self, session_id: str, shown: dict[str, Any], ask: str, said: str,
-                 always: str) -> None:
-        """Write the Yes, and wait for the hook to take it."""
+                 always: str) -> Answer:
+        """Write the Yes, and wait for the hook to take it. The answer goes
+        back to the verb, which gives it once the session is released."""
         yes = approvals_dir() / f"{ask}.yes"
         write_atomic(yes, said, private=True)
         # The hook takes it by removing it.
@@ -11245,22 +11246,21 @@ class Serving:
                 yes.unlink(missing_ok=True)
             except OSError:
                 pass
-            self.reply_json({"id": session_id, "done": False,
-                             "error": "the dialog did not take the Yes: answer it in"
-                                      " the terminal"}, 409)
-            return
+            return 409, {"id": session_id, "done": False,
+                         "error": "the dialog did not take the Yes: answer it in"
+                                  " the terminal"}
         append_event({"session_id": session_id, "hook_event_name": "Approved",
                       "ts": time.time(), "key": shown["key"], "always": always})
-        self.reply_json({"id": session_id, "done": True})
+        return 200, {"id": session_id, "done": True}
 
     def press_decline(self, session_id: str, pane: str, shown: dict[str, Any],
-                      call: str, reason: str) -> None:
-        """Escape, the wait for the proof, and the reason: `decline`'s keys."""
+                      call: str, reason: str) -> Answer:
+        """Escape, the wait for the proof, and the reason: `decline`'s keys,
+        and the answer, which the verb gives once the session is released."""
         if not tmux_interrupt(pane):
-            self.reply_json({"id": session_id,
-                             "error": "tmux would not take the Escape, so"
-                                      " nothing was declined"}, 502)
-            return
+            return 502, {"id": session_id,
+                         "error": "tmux would not take the Escape, so"
+                                  " nothing was declined"}
         seen = False
         if call:
             deadline = time.monotonic() + DECLINE_WAIT
@@ -11276,27 +11276,25 @@ class Serving:
             # landed on something else, and the row stays amber.
             unsent = (" Your reason was not typed: look at the pane, then send"
                       " it from the send box.") if reason else " Look at the pane."
-            self.reply_json({"id": session_id, "done": True, "seen": False,
-                             "error": "Escape went in, but the dialog was not"
-                                      " seen to close." + unsent})
-            return
+            return 200, {"id": session_id, "done": True, "seen": False,
+                         "error": "Escape went in, but the dialog was not"
+                                  " seen to close." + unsent}
         if not reason:
-            self.reply_json({"id": session_id, "done": True, "seen": True})
-            return
+            return 200, {"id": session_id, "done": True, "seen": True}
         if not tmux_send(pane, reason):
-            self.reply_json({"id": session_id, "done": True, "seen": True,
-                             "error": "Declined. tmux did not take the reason:"
-                                      " look at the pane before sending it"
-                                      " again."}, 502)
-            return
-        self.reply_json({"id": session_id, "done": True, "seen": True,
-                         "sent": True})
+            return 502, {"id": session_id, "done": True, "seen": True,
+                         "error": "Declined. tmux did not take the reason:"
+                                  " look at the pane before sending it"
+                                  " again."}
+        return 200, {"id": session_id, "done": True, "seen": True,
+                     "sent": True}
 
 
     def press_send(self, session_id: str, pane: str, text: str,
                    watch: bool = False,
-                   landed: Callable[[], None] | None = None) -> None:
-        """`send`'s keys, and the answer that says how they went.
+                   landed: Callable[[], None] | None = None) -> Answer:
+        """`send`'s keys, and the answer that says how they went, which the
+        verb gives once the session is released.
 
         **A send to an agent at its prompt is seen to land, or said not to**
         (#489). With a dialog of Claude Code's own open -- `/config` -- the
@@ -11317,23 +11315,21 @@ class Serving:
         # send the reader back to type it a second time -- so the message says
         # to look, which is the only thing that settles it.
         if not tmux_send(pane, text):
-            self.reply_json({"id": session_id,
-                             "error": "tmux did not answer. Look at the pane"
-                                      " before sending again: the text may be"
-                                      " on the prompt, unsent."}, 502)
-            return
+            return 502, {"id": session_id,
+                         "error": "tmux did not answer. Look at the pane"
+                                  " before sending again: the text may be"
+                                  " on the prompt, unsent."}
         # Before any answer goes out: a reader of the log after the answer
         # must find what `landed` writes (#626).
         if landed is not None:
             landed()
         if watch and self.daemon.prompt_landed(session_id, moment, SEND_WAIT) is False:
-            self.reply_json({"id": session_id, "done": True, "seen": False,
-                             "error": "Claude Code did not take it: a dialog of"
-                                      " its own may be open. Your text is back"
-                                      " in the box; look at the pane before"
-                                      " you send it again."})
-            return
-        self.reply_json({"id": session_id, "done": True})
+            return 200, {"id": session_id, "done": True, "seen": False,
+                         "error": "Claude Code did not take it: a dialog of"
+                                  " its own may be open. Your text is back"
+                                  " in the box; look at the pane before"
+                                  " you send it again."}
+        return 200, {"id": session_id, "done": True}
 
     def known(self, session_id: str) -> Session | None:
         """The session, or None with a 404 already sent."""
@@ -11855,7 +11851,11 @@ def verb_send(serving: Serving, session_id: str, session: Session,
                           "ask_id": ask_id, "after": after})
             serving.daemon.model_pending[session_id] = (ask_id, time.monotonic())
 
-        serving.press_send(session_id, pane, text, watch, asked if after else None)
+        answer = serving.press_send(session_id, pane, text, watch, asked if after else None)
+    # The answer goes out once the session is given back (#658): sent
+    # from inside, a client that sent again on it found the session still
+    # held, and its next send was refused as "already being typed".
+    return answer
 
 
 def verb_answer(serving: Serving, session_id: str, session: Session,
@@ -11951,7 +11951,11 @@ def verb_decline(serving: Serving, session_id: str, session: Session,
     with serving.daemon.holding(session_id, pane, no=True) as busy:
         if busy:
             return 409, {"error": busy}
-        serving.press_decline(session_id, pane, shown, call, reason)
+        answer = serving.press_decline(session_id, pane, shown, call, reason)
+    # The answer goes out once the session is given back (#658): sent
+    # from inside, a client that sent again on it found the session still
+    # held, and its next send was refused as "already being typed".
+    return answer
 
 
 def verb_approve(serving: Serving, session_id: str, session: Session,
@@ -11993,7 +11997,11 @@ def verb_approve(serving: Serving, session_id: str, session: Session,
     with serving.daemon.holding(session_id, "", no=True) as busy:
         if busy:
             return 409, {"error": busy}
-        serving.give_yes(session_id, shown, ask, said, offered.get(always, ""))
+        answer = serving.give_yes(session_id, shown, ask, said, offered.get(always, ""))
+    # The answer goes out once the session is given back (#658): sent
+    # from inside, a client that sent again on it found the session still
+    # held, and its next send was refused as "already being typed".
+    return answer
 
 
 def verb_name(serving: Serving, session_id: str, session: Session,
