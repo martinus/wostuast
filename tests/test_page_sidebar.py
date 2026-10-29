@@ -3024,3 +3024,36 @@ def test_a_row_links_to_its_pull_request_after_the_branch(ws, page_at, monkeypat
         page.evaluate("""() => patchSession("s1", {pr: {number: 12, repo: "",
                                                      url: "javascript:alert(1)"}}) && drawSessions()""")
         page.wait_for_function("""() => !document.querySelector('.row[data-id="s1"] .prlink')""")
+
+
+def test_an_unread_card_says_what_happened_while_you_were_away(ws, pair_at):
+    """Claude Code's own recap (#662) over the last answer, as Markdown and
+    scrubbed: the shortest way back into a session."""
+    daemon, url = pair_at
+    at = time.time() + 30
+    answer = {"text": "The **last** answer.", "cut": False, "at": at - 29,
+              "away": {"text": "Built **the cache**. <img src=x onerror=alert(1)>", "at": at}}
+    with opened(url) as page:
+        page.route(re.compile(r"/s2/last"), lambda route: route.fulfill(json=answer))
+        two_rows(page)
+        page.click('.row[data-id="s1"]')
+        page.wait_for_function("state.chosen === 's1'")
+        ws.append_event(conftest.event("Stop", sid="s2", ts=time.time() + 1,
+                                       last_assistant_message="done"))
+        daemon.tick()
+        page.wait_for_function(
+            "document.querySelector('#feedlink .n').textContent === '1'")
+        page.click("#feedlink")
+        away = page.locator('.feedentry[data-id="s2"] .feedaway')
+        away.wait_for()
+        assert away.locator("strong").inner_text() == "the cache"
+        assert away.locator("img").count() == 0
+        assert away.locator(".feedawayhead").inner_text().startswith("while you were away")
+        # Over the answer, which still stands.
+        assert page.evaluate("""() => {
+          const card = document.querySelector('.feedentry[data-id="s2"]');
+          const away = card.querySelector('.feedaway');
+          const said = [...card.querySelectorAll('strong')].find((one) => !away.contains(one));
+          return said && said.textContent === 'last'
+            && !!(away.compareDocumentPosition(said) & Node.DOCUMENT_POSITION_FOLLOWING);
+        }""")

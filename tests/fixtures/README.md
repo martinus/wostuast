@@ -463,3 +463,14 @@ chose: a transcript line
 written again on each change, the last one standing (`"pr-link":
 "last-wins"`). `prRepository` is "owner/name". A real record, once one
 is seen, goes into a fixture here and into the tests.
+
+## Claude Code's recap: the `away_summary` record (#662)
+
+Not recorded: a recap needs the terminal to lose its focus for minutes,
+and `tests/claude_pane.py` has no focus to lose. The shape is read off
+Claude Code's 2.1.312 binary, as the owner chose: a transcript line
+`{type: "system", subtype: "away_summary", content, timestamp, uuid,
+isMeta: false}`, written after the turn's last answer, and not again
+while it is the transcript's last record. The first few end with
+" (disable recaps in /config)", for its own terminal. The report of
+2026-10-29 counted 16 in 7 days on one machine.

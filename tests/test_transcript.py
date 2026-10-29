@@ -1012,3 +1012,32 @@ def test_a_refresh_reads_only_so_many_transcripts(ws, transcript_file, monkeypat
     assert sum(1 for one in store.rows if one["pr"]) == 2
     store.refresh()
     assert sum(1 for one in store.rows if one["pr"]) == 4
+
+
+def recap(text, at):
+    """An `away_summary` record in the shape Claude Code's schema gives
+    (2.1.312): no real one was measured, as the owner chose (#662)."""
+    stamp = (time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(at))
+             + f".{int(at % 1 * 1000):03d}Z")
+    return {"type": "system", "subtype": "away_summary", "content": text,
+            "timestamp": stamp, "uuid": "u1", "isMeta": False}
+
+
+def test_claude_code_s_recap_is_taken_only_after_the_last_answer(ws, tmp_path):
+    """The last recap in the transcript's end, written at or after the
+    turn's end; without the words Claude Code adds for its own terminal."""
+    path = tmp_path / "s1.jsonl"
+    ended = 1_800_000_000.0
+    path.write_text(conftest.records(
+        recap("Before the answer.", ended - 60),
+        conftest.record("claude", "The answer."),
+        recap("Built **the cache**. (disable recaps in /config)", ended + 10),
+        # After it, and none of them a recap: another record that names
+        # one, an empty one, and one whose words are no text.
+        {**recap("Not a recap.", ended + 12), "subtype": "turn_duration",
+         "after": "away_summary"},
+        recap(" ", ended + 13), {**recap("x", ended + 14), "content": 3}))
+    assert ws.away_summary_in(path, ended) == {"text": "Built **the cache**.",
+                                               "at": ended + 10}
+    assert ws.away_summary_in(path, ended + 11) is None, "older than the answer"
+    assert ws.away_summary_in(tmp_path / "gone.jsonl", 0.0) is None

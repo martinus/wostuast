@@ -3428,3 +3428,26 @@ def test_every_verb_says_whose_answer_it_is(ws, in_tmux, monkeypatch):
             finally:
                 link.close()
             assert answer.get("id") == "s1", (method, name, answer)
+
+
+def test_the_last_answer_comes_with_the_recap_since(ws, served, transcript_file):
+    """Claude Code's own recap of the time since the answer (#662), for the
+    Unread view's card; none from before the answer."""
+    daemon, base = served
+    now = time.time()
+    path = transcript_file("s1", [])
+    ws.append_event(event("SessionStart", ts=now, transcript_path=str(path)))
+    ws.append_event(event("Stop", ts=now + 1, transcript_path=str(path),
+                          last_assistant_message="Done."))
+    daemon.store.refresh()
+    status, found = get(base + "/api/session/s1/last")
+    assert status == 200 and found["away"] is None
+    stamp = (time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now + 30))
+             + f".{int((now + 30) % 1 * 1000):03d}Z")
+    with path.open("a") as out:
+        out.write(json.dumps({"type": "system", "subtype": "away_summary",
+                              "content": "Built the cache.", "timestamp": stamp}) + "\n")
+    status, found = get(base + "/api/session/s1/last")
+    assert found["text"] == "Done."
+    assert found["away"]["text"] == "Built the cache."
+    assert abs(found["away"]["at"] - (now + 30)) < 0.01
