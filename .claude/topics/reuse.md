@@ -11,7 +11,7 @@ In the page script's "page helpers" section unless named:
 | Want | Call |
 | --- | --- |
 | "has this changed since I drew it?" | `fresh(box, which, key)` — never a hand-rolled `dataset` compare |
-| change a session on the page | `patchSession(id, fields)` — never a write in place: sessions are frozen and compared by object |
+| change a session on the page | `patchSession(id, fields)` — never a write in place: sessions are frozen and compared by object. It draws nothing: a test calls `drawSessions()` after it (#661) |
 | make an element | `put(parent, tag, cls, text)` — a button it makes is `type="button"` |
 | scattered-letter match | `fuzzy(text, query)` → `{score, at}` or null |
 | the items whose path matches the find box | `hits(items, pathOf)` keeps the order; `pick(names)` sorts best first |
@@ -50,6 +50,8 @@ tests failed.
 
 `path_label`, `clip`, `run` (a subprocess with a timeout), `private_dir`,
 `safe_transcript`, `worktree_root`, `is_listed`, `inside`,
+`json_objects` (every reader of a JSON-lines file), `tail_records` (the
+records near a transcript's end, by a word in their line),
 `CONTROL_CHARS`, `ESCAPE_CODES`, `GONE_STATES`, `STATE_WORDS`.
 
 ## Test helpers

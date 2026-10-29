@@ -13,8 +13,10 @@ request, and names the principle.
 1. **Data flows one way**: events, then the fold, then rows, then the wire,
    then the page. The fold does no I/O: file, git and `/proc` reads happen
    at the edges, in the named steps of `Store.refresh` (`follow`, `settle`,
-   `reload_git`, `render`), and a write the fold needs waits until it is
-   done (`save_names`). A change of state is `become`.
+   `reload_git`, `reload_prs`, `render`), and a write the fold needs waits
+   until it is done (`save_names`). **A fact the row carries is read in a
+   step before `render`**: read in the daemon after `refresh`, the rows
+   went out without it (#661). A change of state is `become`.
    `test_the_fold_does_no_io`,
    `test_the_guard_folds_every_handler_and_both_links`.
    **The Python sections stand in layers, and none uses a name of a layer

@@ -20,8 +20,12 @@ for `LIST_FRESH` sets it to 0.
 `git_facts_many`). A test about git hands the real `git_facts` back in,
 sets `GIT_MIN_INTERVAL` to 0 or clears `git_read`, ticks until the row
 holds the fact, then opens the page; else it tests the stub (#607).
+**Any read behind the fold that waits between looks is the same**: the
+`served` start looked already, so a record the test writes later is not
+read for `PR_EVERY` unless the test sets it to 0 (#661).
 `test_a_merge_that_stopped_on_conflicts_counts_them_on_the_row`,
-`test_a_worktree_git_has_not_finished_with_says_so`.
+`test_a_worktree_git_has_not_finished_with_says_so`,
+`test_a_row_links_to_its_pull_request_after_the_branch`.
 
 **A test that commits in a clone gives the clone an identity**: CI has no
 global one, and `git clone` drops the `user.email` the `repo` fixture set,
@@ -87,6 +91,12 @@ scratchpad.
     itself at the page script's first top-level `addEventListener`;
     earlier, a function declaration would replace its wrapper. A function
     a test replaces after load is not watched.
+- **A GREEN may be the record that must win hiding the ones that must
+  be skipped: in the test of a reader where the last good record wins,
+  put the bad ones after the good one.** Before it, the good one won
+  anyway, and a break of each skip stayed green (`pr_link_in`,
+  `away_summary_in`; #661, #662).
+  `test_claude_code_s_recap_is_taken_only_after_the_last_answer`.
 - **A GREEN may be code nothing needs: delete the code, add no test**,
   when no input could tell the two apart: a push's list of `gone` rows
   said what the order says (#430, #431).
