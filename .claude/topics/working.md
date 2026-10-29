@@ -22,6 +22,10 @@ throwaway home, and edit scripts for the one large file.
     put statements in `(() => { … })()`; a bare `const` drew nothing.
   - The next push undoes a `patchSession`, so a picture of a state the
     daemon does not hold patches on an interval.
+  - **A view's card is asked for when the view opens**: `openFeed`, wait
+    for its answer (`async`, `await` a timeout), then set
+    `state.feedText` and `drawFeed($("content"))`. Set first, the answer
+    replaced the made-up text (#662).
   - `drawHeader()` draws the bars over the transcript, not `draw()`.
   - `tour.py --hover SELECTOR` shows what only a hover shows: the tour
     moves the pointer, so a `mouseover` from `--eval` drew nothing.
