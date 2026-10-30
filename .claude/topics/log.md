@@ -72,7 +72,11 @@ The event log: each line folded once and in order, `Tail`, archives, `seq`.
     read starts.
   - **One event that raises costs only itself**: `Tail.lines` counts the
     piece before it hands out lines, and `Store.fold` catches per event.
-    `test_one_event_that_cannot_be_folded_costs_only_itself`.
+    **So does a line that cannot be read**: `json_objects` skips
+    `RecursionError` too, which a line nested too deep raises and which is
+    no `ValueError`; it left the reader, outside the fold's catch.
+    `test_one_event_that_cannot_be_folded_costs_only_itself`,
+    `test_a_line_nested_too_deep_to_read_costs_only_itself`.
 - **Take an archive's name with `os.link`, never `os.replace`**: the number
   comes from a listing, and `os.replace` overwrites what landed there
   meanwhile; it once lost every event (topics/safety, "A `flock` is on an

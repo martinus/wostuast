@@ -52,6 +52,15 @@ Install and update, the hook and status files, Claude Code's
   `labelled`. **"Handled" is `_HANDLERS`, the fold's own table**: a list
   of the report's own called wostuast's `ModelAsked` new. A transcript
   record with no `version` is "(none)", never "(other)".
+  - **The Daemon section folds the reader's own log, as a start does, and
+    writes nothing** (`report_daemon`, `fold(save=False)`): made-up
+    history (`tests/scale.py`) is no measure of a real one, and a fold
+    moves a name across a `/clear` into `names.json`, which a running
+    daemon keeps. It runs before the transcripts are read: the memory it
+    reports is the process's peak. `StopFailure.error` is a kind, as an
+    expired login's was not measured (#672).
+    `test_the_report_times_the_daemon_and_writes_nothing`,
+    `test_the_report_names_the_api_error_that_ended_a_turn`.
   `doctor`'s lines go through `private_paths`: home becomes
   `~`; wostuast's folders outside home `<state dir>` and the like
   (`XDG_STATE_HOME` can carry a user name); this copy `<this copy>`; any

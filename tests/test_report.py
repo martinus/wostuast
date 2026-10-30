@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from conftest import bare_event
+from conftest import bare_event, event
 
 
 def events(ws, *found, at=None):
@@ -48,6 +48,40 @@ def test_the_report_never_holds_the_readers_text(ws, tmp_path, monkeypatch):
     assert "| Bash | 1 |" in said
     assert "startup (1)" in said
     assert "(other)" in said
+
+
+def test_the_report_names_the_api_error_that_ended_a_turn(ws):
+    """Which `error` an expired login sends was not measured, so the login
+    fix reads Claude Code's words too (#672). The report names it, as it
+    names a notification's kind."""
+    events(ws, bare_event("StopFailure", error="authentication_failed",
+                          last_assistant_message="Login expired"))
+    said = ws.build_report(7, measure=False)
+    assert "| StopFailure.error | authentication_failed (1) |" in said, said
+
+
+def test_the_report_times_the_daemon_and_writes_nothing(ws):
+    """What a start's read costs on the reader's own log: made-up history
+    is no measure of a real one. Measured on a Store of its own, and
+    nothing is written, though the fold moves a name across a `/clear`:
+    a running daemon keeps its own files."""
+    now = time.time()
+    events(ws, event("SessionStart", source="startup", ts=now - 100))
+    ws.Store().rename("s1", "the payments work")
+    events(ws, event("SessionEnd", reason="clear", ts=now - 50),
+           event("SessionStart", sid="s2", source="clear", ts=now - 49.9),
+           # The agents view's own session, held and not shown (`untasked`).
+           event("SessionStart", sid="s3", source="startup", background=True,
+                 pid=5151, ts=now - 10))
+    state = ws.state_dir()
+    before = {path: path.read_bytes() for path in state.rglob("*") if path.is_file()}
+    said = ws.build_report(7, measure=False)
+    after = {path: path.read_bytes() for path in state.rglob("*") if path.is_file()}
+    assert after == before
+    assert "## Daemon" in said
+    assert "| Events read | 4 from 1 file (" in said, said
+    assert "| Sessions held, shown | 3, 2 |" in said, said
+    assert "| One push of the session list | " in said, said
 
 
 def test_what_the_review_found_does_not_leak_either(ws, tmp_path, monkeypatch):

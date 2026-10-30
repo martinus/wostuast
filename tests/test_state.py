@@ -498,6 +498,20 @@ def test_one_event_that_cannot_be_folded_costs_only_itself(ws):
     assert sorted(store.sessions) == ["s0", "s1", "s2"]
 
 
+def test_a_line_nested_too_deep_to_read_costs_only_itself(ws):
+    """`json.loads` raises RecursionError on a line nested deeper than it
+    goes, and that is no ValueError: it left the reader, outside the fold's
+    catch per event, and the events after it in that piece of the log were
+    lost on every start. The report's own read of the log found it."""
+    ws.append_event(event("SessionStart", ts=1000.0))
+    with open(ws.events_path(), "a", encoding="utf-8") as handle:
+        handle.write("[" * 100000 + "\n")
+    ws.append_event(event("SessionStart", sid="s2", ts=1001.0))
+    store = ws.Store()
+    store.follow()
+    assert sorted(store.sessions) == ["s1", "s2"]
+
+
 @pytest.mark.parametrize("options", [3, {"a": 1}, True, "abc"])
 def test_options_that_are_not_a_list_are_not_answered(ws, options):
     """`read_ask` called `len()` and a slice on them, and raised inside the
