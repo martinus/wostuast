@@ -18002,8 +18002,8 @@ function idleCompactAt(s) {
 function putCompacts(parent, at) {
   const node = put(parent, "span", "compacts");
   node.dataset.at = String(at);
-  node.title = "If this session stays idle, Claude Code compacts it at "
-    + clock(at) + ": 54 minutes after its last request, before its"
+  node.title = "If this session stays idle, Claude Code compacts it then:"
+    + " 54 minutes after its last request, before its"
     + " 1-hour prompt cache expires. A prompt before then keeps the"
     + " conversation whole. \"idleCompaction\": false in Claude Code's"
     + " settings.json turns it off.";
@@ -18014,7 +18014,8 @@ function putCompacts(parent, at) {
 function tickCompacts(node) {
   const left = Number(node.dataset.at) - (Date.now() / 1000 + state.skew);
   node.hidden = left <= 0;
-  node.textContent = "compacts in " + lasted(Math.max(0, left));
+  node.textContent = "compacts " + clock(Number(node.dataset.at))
+    + " (in " + lasted(Math.max(0, left)) + ")";
 }
 
 // What the daemon answered, on the one line the page keeps for saying
