@@ -228,6 +228,21 @@ def test_doctor_is_happy_after_install(ws, tmp_path, monkeypatch, capsys):
     assert code == 0
 
 
+def test_install_asks_for_a_restart_only_when_settings_changed(ws, tmp_path, monkeypatch, capsys):
+    """A session reads its hooks and status line from Claude Code's
+    `settings.json` when it starts; the program, the hook file and the
+    status file run fresh on each event. So only a change there needs a
+    restart, and an install that changed nothing asked for one."""
+    monkeypatch.setattr(ws, "install_path", lambda: tmp_path / "bin" / "wostuast")
+    ws.cmd_install(None)
+    out = capsys.readouterr().out
+    assert (f"restart your Claude Code sessions to pick up the {len(ws.HOOK_EVENTS)}"
+            " hooks and the status line") in out
+    ws.cmd_install(None)
+    out = capsys.readouterr().out
+    assert "nothing to change" in out and "restart" not in out
+
+
 def test_doctor_says_and_a_start_mends_an_installed_copy_of_another_version(
         ws, tmp_path, monkeypatch, capsys):
     """The hooks and the status line run the installed copy, not the checkout
@@ -255,7 +270,9 @@ def test_doctor_says_and_a_start_mends_an_installed_copy_of_another_version(
     assert start(ws, monkeypatch) == 0
     out = capsys.readouterr().out
     assert f"\u21bb updated {target}" in out
-    assert "restart your Claude Code sessions" in out
+    # The program alone: a session runs the hook file fresh on each event,
+    # so it needs no restart, and the start sent the reader to one.
+    assert "restart" not in out
     assert ws.install_behind() == ""
 
 
@@ -931,7 +948,9 @@ def test_a_start_brings_everything_up_to_date_and_says_so_in_a_line(
     for part in (str(ws.install_path()), str(ws.hook_path()),
                  f"{len(ws.HOOK_EVENTS)} hooks", "status line"):
         assert part in updated[0]
-    assert "restart your Claude Code sessions" in out
+    # A session reads its hooks and status line when it starts.
+    assert (f"    restart your Claude Code sessions to pick up the {len(ws.HOOK_EVENTS)}"
+            " hooks and the status line\n") in out
     settings = json.loads(ws.settings_path().read_text())
     assert all(event in settings["hooks"] for event in ws.HOOK_EVENTS)
 

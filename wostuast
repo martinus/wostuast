@@ -14322,6 +14322,32 @@ def bring_up_to_date() -> tuple[list[str], list[str], str, tuple[str, str] | Non
     return changes, notes, "", built
 
 
+def changed_parts(changes: list[str]) -> list[str]:
+    """What `bring_up_to_date` changed, in a few words: a file by its path,
+    and the hooks counted, not named one by one -- twelve lines of "added
+    hook" said less than "12 hooks"."""
+    parts = [tilde(line[len("wrote "):]) for line in changes if line.startswith("wrote ")]
+    hooks = sum(1 for line in changes if line.startswith(("added hook", "moved hook")))
+    if hooks:
+        parts.append(counted(hooks, "hook", "hooks"))
+    if "added status line" in changes or "moved status line" in changes:
+        parts.append("status line")
+    return parts
+
+
+def restart_said(changes: list[str]) -> str:
+    """The line that asks for a restart, or "" when none is needed. Claude
+    Code reads its hooks and its status line from `settings.json` when a
+    session starts, so only a change there needs one. The program, the
+    hook file and the status file run fresh on each event: the line after
+    an update of the program alone sent the reader to restart for nothing."""
+    parts = changed_parts([line for line in changes if not line.startswith("wrote ")])
+    if not parts:
+        return ""
+    return ("restart your Claude Code sessions to pick up "
+            + " and ".join(f"the {part}" for part in parts))
+
+
 def cmd_install(args: argparse.Namespace) -> int:
     """Copy wostuast to ~/.local/bin and register the hooks and the status line.
 
@@ -14349,7 +14375,9 @@ def cmd_install(args: argparse.Namespace) -> int:
         print(line)
     if str(target.parent) not in os.environ.get("PATH", "").split(os.pathsep):
         print(f"note: {target.parent} is not on your PATH")
-    print("restart your Claude Code sessions so they pick up the hooks.")
+    said = restart_said(changes)
+    if said:
+        print(said)
     return 0
 
 
@@ -14405,19 +14433,6 @@ def mark(kind: str, text: str, color: bool) -> str:
     if not color:
         return f"  {sign} {text}"
     return f"  {ink}{sign}{RESET} {text}"
-
-
-def changed_parts(changes: list[str]) -> list[str]:
-    """What `bring_up_to_date` changed, in a few words: a file by its path,
-    and the hooks counted, not named one by one -- twelve lines of "added
-    hook" said less than "12 hooks"."""
-    parts = [tilde(line[len("wrote "):]) for line in changes if line.startswith("wrote ")]
-    hooks = sum(1 for line in changes if line.startswith(("added hook", "moved hook")))
-    if hooks:
-        parts.append(counted(hooks, "hook", "hooks"))
-    if "added status line" in changes or "moved status line" in changes:
-        parts.append("status line")
-    return parts
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -14538,7 +14553,9 @@ def serve_page(args: argparse.Namespace, color: bool, held: int) -> int:
         return 1
     if changes:
         print(mark("changed", "updated " + " \u00b7 ".join(changed_parts(changes)), color))
-        print("    restart your Claude Code sessions to use them")
+        said = restart_said(changes)
+        if said:
+            print("    " + said)
     else:
         print(mark("ok", f"{len(HOOK_EVENTS)} hooks → {tilde(hook_path())}", color))
     if notes:
