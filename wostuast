@@ -17990,11 +17990,10 @@ function putContext(parent, percent) {
 }
 
 // When Claude Code compacts the session if it stays at its prompt, or 0:
-// only a ready one, as a turn or a dialog moves the moment, and only while
-// the moment is ahead.
+// only a ready one, as a turn or a dialog moves the moment. One gone by is
+// hidden by `tickCompacts`.
 function idleCompactAt(s) {
-  const at = (s && s.state === "done" && s.idle_compact_at) || 0;
-  return at > Date.now() / 1000 + state.skew ? at : 0;
+  return (s && s.state === "done" && s.idle_compact_at) || 0;
 }
 
 // The countdown to it, beside the context it shrinks. `tickCompacts` says

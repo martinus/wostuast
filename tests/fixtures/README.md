@@ -454,6 +454,19 @@ every resume's `SessionStart` carries `seconds_since_last_response`,
 again costs, at list price, without the reply; Claude Code's schema says it
 is paid with the first request, so `total_cost_usd` counts it once paid.
 
+## Idle compaction: when Claude Code compacts a waiting session
+
+Read off Claude Code's 2.1.314 binary, not measured: the timer starts at
+the last request of the main conversation and fires at nine tenths of
+its prompt cache's life, so 54 minutes for a 1-hour cache. A 5-minute
+cache has none. It compacts only from 200,000 tokens of context
+(`CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS`, at least 100,000), with
+auto-compact on and `"idleCompaction"` not `false` in settings.json, and
+the notice after it says so. Which cache a request wrote is in its
+reply's `usage.cache_creation`, measured on 2.1.314:
+`{"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 2860}`.
+Claude Code takes a 5-minute write over a 1-hour one.
+
 ## A session's pull request: the `pr-link` record (#661)
 
 Not recorded: no session here opened a pull request on 2.1.312. The shape

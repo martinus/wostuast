@@ -305,6 +305,46 @@ def test_the_strip_carries_what_this_session_has_spent(page_at):
             assert "/clear" in seen["caveat"], (tab, seen)
 
 
+def test_the_context_bar_counts_down_to_idle_compaction(ws, page_at, monkeypatch):
+    """Claude Code compacts a long conversation 54 minutes after its last
+    request when nothing is sent (its 2.1.314 code), and the bar says when,
+    beside the context it shrinks: the clock, and the time left, short. Only
+    for a ready session, and only while the moment is ahead."""
+    daemon, path = page_at
+    monkeypatch.setattr(ws, "PR_EVERY", 0.0)    # the start looked already
+    last = int(time.time()) - 31 * 60
+    write_records(daemon, {
+        "type": "assistant", "isSidechain": False,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(last)),
+        "message": {"role": "assistant", "content": [{"type": "text", "text": "done"}],
+                    "usage": {"input_tokens": 10, "cache_read_input_tokens": 240_000,
+                              "cache_creation_input_tokens": 3000, "output_tokens": 50,
+                              "cache_creation": {"ephemeral_1h_input_tokens": 3000,
+                                                 "ephemeral_5m_input_tokens": 0}}}})
+    with opened(path) as page:
+        daemon.tick()
+        shown = page.locator("#ctxslot .compacts")
+        shown.wait_for()
+        due = last + 54 * 60
+        clock = page.evaluate(f"clock({due})")
+        assert shown.inner_text() in (f"compacts {clock} (in 23min)",
+                                      f"compacts {clock} (in 22min)"), shown.inner_text()
+        assert "idleCompaction" in shown.get_attribute("title")
+        # Beside the context it shrinks, before the spend.
+        assert page.evaluate("""() => [...document.getElementById('ctxslot').children]
+                                        .map((one) => one.className)""") \
+            == ["model", "ctx", "compacts", "spent"]
+        # The moment comes: the tick takes it away.
+        page.evaluate(f"""() => {{
+          document.querySelector('#ctxslot .compacts').dataset.at =
+            String(Date.now() / 1000 + state.skew + 1.5); }}""")
+        page.wait_for_function("document.querySelector('#ctxslot .compacts').hidden")
+        # A turn moves the moment, so a working session shows none.
+        page.evaluate("""() => { patchSession("s1", {state: "working",
+          idle_compact_at: Date.now() / 1000 + state.skew + 600}); drawHeader(); }""")
+        page.wait_for_function("!document.querySelector('#ctxslot .compacts')")
+
+
 def test_a_session_that_was_told_no_cost_shows_none(ws, served):
     """`None` is "the status line did not say" and 0 is "it spent nothing".
     A session on an API key gets no `cost` at all, and $0.00 for it would be a

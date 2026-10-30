@@ -249,3 +249,16 @@ the loaders.
   would move every split tab's rows.
   `test_a_resume_the_cache_did_not_outlast_says_what_its_next_prompt_costs`,
   `test_a_resume_the_cache_did_not_outlast_says_its_cost_over_the_send_box`.
+- **The context bar says when Claude Code compacts an idle session, by the
+  clock and short: `compacts 10:23 (in 12min)`** (`idle_compact_at`,
+  `last_request_in`, `putCompacts`, `tickCompacts`): the reader chose the
+  place, beside the context it shrinks, and the words. **The moment is
+  Claude Code's own rule, read off its 2.1.314 code, not measured**: the
+  last request plus nine tenths of a 1-hour cache, for 200,000 tokens or
+  more; a 5-minute cache never compacts idle. Read behind the fold with
+  the pull request (`read_prs`), never with `"idleCompaction": false` in
+  its settings. **Only a ready session shows it**: a turn or a dialog
+  moves the moment. `tickAges` counts it down and hides it once gone by.
+  `test_idle_compaction_comes_54_minutes_after_a_long_conversation_s_last_request`,
+  `test_a_session_is_given_its_idle_compaction_behind_the_fold`,
+  `test_the_context_bar_counts_down_to_idle_compaction`.

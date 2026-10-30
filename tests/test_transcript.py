@@ -1014,6 +1014,62 @@ def test_a_refresh_reads_only_so_many_transcripts(ws, transcript_file, monkeypat
     assert sum(1 for one in store.rows if one["pr"]) == 4
 
 
+def reply(at, tokens=250_000, ttl="1h", **more):
+    """An assistant record with the `usage` Claude Code writes: the context
+    it sent, mostly read from the cache, and what it wrote to which cache.
+    Measured on 2.1.314: `cache_creation` splits the write by lifetime."""
+    written = {"ephemeral_1h_input_tokens": 3000 if ttl in ("1h", "both") else 0,
+               "ephemeral_5m_input_tokens": 3000 if ttl in ("5m", "both") else 0}
+    usage = {"input_tokens": 10, "cache_read_input_tokens": tokens - 3010,
+             "cache_creation_input_tokens": 3000 if ttl else 0, "output_tokens": 50,
+             "cache_creation": written if ttl else {}}
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(at))
+    return {"type": "assistant", "timestamp": stamp, "isSidechain": False,
+            "message": {"role": "assistant", "usage": usage,
+                        "content": [{"type": "text", "text": "done"}]}, **more}
+
+
+def test_idle_compaction_comes_54_minutes_after_a_long_conversation_s_last_request(ws, tmp_path):
+    """Claude Code 2.1.314 compacts a conversation of 200,000 tokens or more
+    at nine tenths of its 1-hour cache's life after the last request, before
+    the cache expires (its code; not measured). The last reply of the
+    conversation itself counts: a subagent's and one that used no API come
+    after it here, and are not it."""
+    path = tmp_path / "s1.jsonl"
+    last = 1_800_000_000.0
+    sidechain = {**reply(last + 60), "isSidechain": True}
+    synthetic = reply(last + 90)
+    synthetic["message"]["usage"] = {"input_tokens": 0, "output_tokens": 0}
+    path.write_text(conftest.records(reply(last - 600), reply(last), sidechain, synthetic))
+    assert ws.idle_compact_at(ws.last_request_in(path)) == last + 54 * 60
+
+    def due(**how):
+        path.write_text(conftest.records(reply(last, **how)))
+        return ws.idle_compact_at(ws.last_request_in(path))
+
+    assert due(tokens=200_000) == last + 54 * 60
+    assert due(tokens=199_999) == 0.0, "too small to compact"
+    assert due(ttl="5m") == 0.0, "a 5-minute cache is gone before"
+    assert due(ttl="both") == 0.0, "a 5-minute write wins, as in Claude Code"
+    assert due(ttl="") == 0.0, "no cache written, no lifetime known"
+    assert ws.last_request_in(tmp_path / "gone.jsonl") is None
+
+
+def test_a_session_is_given_its_idle_compaction_behind_the_fold(ws, transcript_file):
+    """Read with the pull request, and never once the reader turned it off
+    with `"idleCompaction": false`, which Claude Code's notice names."""
+    last = float(int(time.time()) - 60)      # the stamp keeps whole seconds
+    path = transcript_file("s1", [reply(last)])
+    ws.append_event(conftest.event("SessionStart", ts=time.time(), transcript_path=str(path)))
+    store = ws.Store()
+    store.refresh()
+    assert store.rows[0]["idle_compact_at"] == round(last + 54 * 60, 3)
+    ws.settings_path().write_text(json.dumps({"idleCompaction": False}))
+    store = ws.Store()
+    store.refresh()
+    assert store.rows[0]["idle_compact_at"] == 0
+
+
 def recap(text, at):
     """An `away_summary` record in the shape Claude Code's schema gives
     (2.1.312): no real one was measured, as the owner chose (#662)."""
