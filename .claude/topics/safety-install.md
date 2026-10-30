@@ -61,6 +61,20 @@ Install and update, the hook and status files, Claude Code's
     expired login's was not measured (#672).
     `test_the_report_times_the_daemon_and_writes_nothing`,
     `test_the_report_names_the_api_error_that_ended_a_turn`.
+  - **A record the page does not show is given by its shape: field names
+    and the kind of each value, never a value** (`field_paths`,
+    `kind_named`): a reader for it is written from transcripts that
+    cannot be shared. A key shows only as a word a schema writes
+    (`FIELD_NAME`): a file name, a path or an id is the reader's. A dict
+    of more than `FIELDS_MOST` keys is a map of the reader's things, and
+    only its size shows. Three levels down. A `StopFailure`'s `agent_id`
+    is said to be a subagent's or not, never shown.
+    `test_the_report_gives_the_shape_of_a_record_the_page_does_not_show`,
+    `test_the_report_says_whether_a_subagent_s_api_error_ended_a_turn`.
+  - **An error says where it was logged by the fixed words that open its
+    line, never the rest** (`LOG_SITES`): the reader's own status line
+    timed out 38 times a month, and the report said only
+    `TimeoutExpired`. `test_an_error_says_where_it_was_logged_and_never_the_command`.
   `doctor`'s lines go through `private_paths`: home becomes
   `~`; wostuast's folders outside home `<state dir>` and the like
   (`XDG_STATE_HOME` can carry a user name); this copy `<this copy>`; any
