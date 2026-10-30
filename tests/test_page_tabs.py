@@ -335,9 +335,9 @@ def test_the_context_bar_counts_down_to_idle_compaction(ws, page_at, monkeypatch
                                         .map((one) => one.className)""") \
             == ["model", "ctx", "compacts", "spent"]
         # The moment comes: the tick takes it away.
-        page.evaluate(f"""() => {{
+        page.evaluate("""() => {
           document.querySelector('#ctxslot .compacts').dataset.at =
-            String(Date.now() / 1000 + state.skew + 1.5); }}""")
+            String(Date.now() / 1000 + state.skew + 1.5); }""")
         page.wait_for_function("document.querySelector('#ctxslot .compacts').hidden")
         # A turn moves the moment, so a working session shows none.
         page.evaluate("""() => { patchSession("s1", {state: "working",
