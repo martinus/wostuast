@@ -19,6 +19,7 @@ from browser import (
     wait_until,
     wait_for_watching,
     write_records,
+    hold,
     own_context,
     load,
 )
@@ -303,6 +304,46 @@ def test_the_strip_carries_what_this_session_has_spent(page_at):
             # read once and the strip has no width for a sentence.
             assert "estimate" in seen["caveat"], (tab, seen)
             assert "/clear" in seen["caveat"], (tab, seen)
+
+
+def test_the_context_bar_counts_down_to_idle_compaction(ws, page_at, monkeypatch):
+    """Claude Code compacts a long conversation 54 minutes after its last
+    request when nothing is sent (its 2.1.314 code), and the bar says when,
+    beside the context it shrinks: the clock, and the time left, short. Only
+    for a ready session, and only while the moment is ahead."""
+    daemon, path = page_at
+    monkeypatch.setattr(ws, "PR_EVERY", 0.0)    # the start looked already
+    last = int(time.time()) - 31 * 60
+    write_records(daemon, {
+        "type": "assistant", "isSidechain": False,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(last)),
+        "message": {"role": "assistant", "content": [{"type": "text", "text": "done"}],
+                    "usage": {"input_tokens": 10, "cache_read_input_tokens": 240_000,
+                              "cache_creation_input_tokens": 3000, "output_tokens": 50,
+                              "cache_creation": {"ephemeral_1h_input_tokens": 3000,
+                                                 "ephemeral_5m_input_tokens": 0}}}})
+    with opened(path) as page:
+        daemon.tick()
+        shown = page.locator("#ctxslot .compacts")
+        shown.wait_for()
+        due = last + 54 * 60
+        clock = page.evaluate(f"clock({due})")
+        assert shown.inner_text() in (f"compacts {clock} (in 23min)",
+                                      f"compacts {clock} (in 22min)"), shown.inner_text()
+        assert "idleCompaction" in shown.get_attribute("title")
+        # Beside the context it shrinks, before the spend.
+        assert page.evaluate("""() => [...document.getElementById('ctxslot').children]
+                                        .map((one) => one.className)""") \
+            == ["model", "ctx", "compacts", "spent"]
+        # The moment comes: the tick takes it away.
+        page.evaluate("""() => {
+          document.querySelector('#ctxslot .compacts').dataset.at =
+            String(Date.now() / 1000 + state.skew + 1.5); }""")
+        page.wait_for_function("document.querySelector('#ctxslot .compacts').hidden")
+        # A turn moves the moment, so a working session shows none.
+        page.evaluate("""() => { patchSession("s1", {state: "working",
+          idle_compact_at: Date.now() / 1000 + state.skew + 600}); drawHeader(); }""")
+        page.wait_for_function("!document.querySelector('#ctxslot .compacts')")
 
 
 def test_a_session_that_was_told_no_cost_shows_none(ws, served):
@@ -808,6 +849,24 @@ def test_the_summary_tab_says_where_the_tokens_went(ws, page_at):
         page.keyboard.press("Escape")
         page.keyboard.press("5")
         page.wait_for_function("state.feed === 'commands'")
+
+
+def test_the_statistics_tab_says_it_is_reading_until_the_summary_comes(page_at):
+    """The tab is drawn before its summary answers, and says so. Whether a
+    run drew that note was down to timing: `main` went red in CI when every
+    shard's summary came before the first draw, and the coverage ratchet
+    found the line unrun (topics/testing, "Three green runs")."""
+    _, path = page_at
+    with opened(path) as page:
+        wait_for_map(page)
+        held = hold(page, "**/api/session/s1/summary*")
+        page.keyboard.press("4")
+        page.wait_for_selector(".summary > .sumnote")
+        assert page.locator(".summary > .sumnote").first.inner_text() \
+            == "Reading the transcript\u2026"
+        wait_until(page, lambda: held)
+        held[0].continue_()
+        page.wait_for_selector(".summary > .sumhead")
 
 
 def test_the_statistics_tab_says_where_the_time_went_by_tool(ws, page_at):

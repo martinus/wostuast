@@ -132,7 +132,9 @@ scratchpad.
       A new page function needs a test that runs it, or an entry with why.
       - **Three green runs do not prove a line is run on purpose** (#609):
         a line red in CI gets its own test before it is ever an allowance:
-        `test_esc_in_the_find_box_empties_it_and_leaves_it`.
+        `test_esc_in_the_find_box_empties_it_and_leaves_it`. A line drawn
+        only before a fetch answers is held with `hold`:
+        `test_the_statistics_tab_says_it_is_reading_until_the_summary_comes`.
       - **Patch for a while with `monkeypatch.context()`, never
         `monkeypatch.undo()`** (#624): the fixtures share the test's
         `monkeypatch`, and `undo` took theirs too; the daemon then lost its
