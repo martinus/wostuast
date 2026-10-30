@@ -1501,6 +1501,11 @@ class Session:
     #: One of those tasks is a subagent, whose report is the agent's next
     #: step: such a row stays working while the prompt is idle (#488).
     waits_on_agents: bool = False
+    #: The `error` of the `StopFailure` that holds the row amber, or empty.
+    #: A login ends that amber (`_on_notification`): `/login` sends no
+    #: prompt and starts no call, so nothing else did. Cleared with the
+    #: attention.
+    stopped_by: str = ""
     attention_since: float = 0.0
     # True once this session has sent a PermissionRequest. That event is
     # the same news as a permission Notification, up to twelve seconds
@@ -2812,6 +2817,7 @@ def _clear_attention(session: Session) -> None:
     session.reason = ""
     session.waits_on_tasks = False
     session.waits_on_agents = False
+    session.stopped_by = ""
     session.asked_about = ""
     session.asking = None
     session.permission = None
@@ -3230,6 +3236,17 @@ def _on_notification(session: Session, event: dict[str, Any], ts: float) -> None
             kind = "permission_prompt"
         else:
             kind = "other"
+    if kind == "auth_success" and session.stopped_by:
+        # The reader ran `/login` at the agent an API error stopped. That is
+        # their answer: the agent now waits at its prompt to be told to go
+        # on, which is "ready". `/login` is a local command, so no prompt
+        # and no call follows, and the row stayed amber with "Please run
+        # /login" under it after the login worked. Any error ends here, not
+        # only a login's: a login to another account lifts a usage or
+        # billing stop too, and the next prompt says again if it did not.
+        become(session, "done")
+        session.last_event = message or "logged in"
+        return
     if kind == "idle_prompt":
         # The agent waits on its own background task (#447): the prompt is
         # idle, the agent is not, and the row's line says what it waits on.
@@ -3363,6 +3380,7 @@ def _on_stop_failure(session: Session, event: dict[str, Any], ts: float) -> None
     words = clip(said.strip().split("\n")[0], 200)
     session.attention_since = ts
     session.reason = "stopped: " + (words or STOP_FAILURES.get(error, error))
+    session.stopped_by = error
     session.last_event = f"stopped by an API error ({error})"
     session.ended_at = ts
     # Its last words are Claude Code's sentence about the error: the turn

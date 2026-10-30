@@ -125,6 +125,36 @@ def test_an_api_error_with_no_words_is_named_by_its_kind(ws, store):
     assert store.rows[0]["reason"] == "stopped: usage limit reached"
 
 
+def test_a_login_after_an_api_error_ends_the_amber(ws, store):
+    """`/login` is a local command: it sends no prompt and starts no call,
+    so the row an expired login stopped stayed amber, "Please run /login",
+    after the login worked. Its `auth_success` notification is the
+    reader's answer, and the agent waits at its prompt: ready. A login
+    while a dialog is up answers nothing, and the dialog stays."""
+    ws.append_event(event("UserPromptSubmit", prompt="go", ts=1000.0))
+    ws.append_event(recorded_stop_failure(
+        ts=1005.0, error="authentication_failed",
+        last_assistant_message="Login expired · Please run /login"))
+    store.refresh(now=1005.0, alive=lambda p: True)
+    assert store.rows[0]["state"] == "needs_you"
+    ws.append_event(event("Notification", notification_type="auth_success",
+                          message="Login successful", ts=1020.0))
+    store.refresh(now=1020.0, alive=lambda p: True)
+    row = store.rows[0]
+    assert row["state"] == "done", row
+    assert row["reason"] == "", row
+    assert row["since"] == 1020.0
+
+    ws.append_event(event("UserPromptSubmit", prompt="go on", ts=1030.0))
+    ws.append_event(event("PermissionRequest", tool_name="Bash",
+                          tool_input={"command": "make"}, ts=1031.0))
+    ws.append_event(event("Notification", notification_type="auth_success",
+                          message="Login successful", ts=1032.0))
+    store.refresh(now=1032.0, alive=lambda p: True)
+    assert store.rows[0]["state"] == "needs_you"
+    assert store.rows[0]["reason"] == "permission: Bash make"
+
+
 def test_git_runs_once_and_then_waits(ws, monkeypatch):
     calls: list[list[str]] = []
 
