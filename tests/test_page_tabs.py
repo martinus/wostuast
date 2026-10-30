@@ -19,6 +19,7 @@ from browser import (
     wait_until,
     wait_for_watching,
     write_records,
+    hold,
     own_context,
     load,
 )
@@ -848,6 +849,24 @@ def test_the_summary_tab_says_where_the_tokens_went(ws, page_at):
         page.keyboard.press("Escape")
         page.keyboard.press("5")
         page.wait_for_function("state.feed === 'commands'")
+
+
+def test_the_statistics_tab_says_it_is_reading_until_the_summary_comes(page_at):
+    """The tab is drawn before its summary answers, and says so. Whether a
+    run drew that note was down to timing: `main` went red in CI when every
+    shard's summary came before the first draw, and the coverage ratchet
+    found the line unrun (topics/testing, "Three green runs")."""
+    _, path = page_at
+    with opened(path) as page:
+        wait_for_map(page)
+        held = hold(page, "**/api/session/s1/summary*")
+        page.keyboard.press("4")
+        page.wait_for_selector(".summary > .sumnote")
+        assert page.locator(".summary > .sumnote").first.inner_text() \
+            == "Reading the transcript\u2026"
+        wait_until(page, lambda: held)
+        held[0].continue_()
+        page.wait_for_selector(".summary > .sumhead")
 
 
 def test_the_statistics_tab_says_where_the_time_went_by_tool(ws, page_at):
