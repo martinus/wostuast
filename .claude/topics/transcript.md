@@ -123,6 +123,14 @@ line, and a fetch against a push.
   task's news a note; other attachments stay out. **One with no
   `commandMode` is a note**: the reader's rail on words not theirs is the
   worse mistake. `test_a_message_queued_while_the_agent_works_is_drawn`.
+- **Claude Code's recap is a block of its own, where it was written,
+  drawn as an aside named "recap"** (#674, `add_recap`, kind `recap`,
+  `ASIDE_NAMES`): the reader asked to see it, and not in the way; the
+  next turn moves it out of sight. It is the `away_summary` record the Unread card reads too
+  (`away_summary_in`, #662), without `AWAY_SAID_TOO`. One with no words
+  is nothing.
+  `test_claude_code_s_recap_is_a_block_at_its_place`,
+  `test_claude_code_s_recap_is_drawn_quietly_where_it_was_written`.
 - **`isMeta` is Claude Code speaking, never the reader**: a Stop hook's
   answer, a skill's body, an image's caption. `user_block` makes them notes,
   for a string and for pieces.

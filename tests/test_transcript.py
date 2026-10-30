@@ -1079,6 +1079,24 @@ def recap(text, at):
             "timestamp": stamp, "uuid": "u1", "isMeta": False}
 
 
+def test_claude_code_s_recap_is_a_block_at_its_place(ws, tmp_path):
+    """The reader asked to see the recap where they read, not in the way
+    (#674): a block of its own after the answer it follows, without the
+    words Claude Code adds for its own terminal. One with no words is
+    nothing."""
+    path = tmp_path / "s1.jsonl"
+    at = 1_800_000_000.0
+    path.write_text(conftest.records(
+        conftest.record("claude", "The answer."),
+        recap("Built **the cache**. (disable recaps in /config)", at),
+        recap(" ", at + 1), {**recap("x", at + 2), "content": 3}))
+    transcript = ws.Transcript(str(path))
+    transcript.read_new()
+    assert [(one.kind, one.text) for one in transcript.blocks] == [
+        ("text", "The answer."), ("recap", "Built **the cache**.")]
+    assert transcript.blocks[1].ts == at
+
+
 def test_claude_code_s_recap_is_taken_only_after_the_last_answer(ws, tmp_path):
     """The last recap in the transcript's end, written at or after the
     turn's end; without the words Claude Code adds for its own terminal."""
