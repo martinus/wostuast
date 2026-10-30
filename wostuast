@@ -992,13 +992,17 @@ def json_objects(lines: Iterable[bytes]) -> Iterator[dict[str, Any]]:
     than decoding the file first. Broken UTF-8 raises UnicodeDecodeError, and
     that is a ValueError, so one clause covers a torn line and a bad byte
     alike. Every reader of a JSON-lines file goes through here.
+
+    A line nested deeper than the parser goes raises RecursionError, and
+    that is no ValueError: it left the reader, outside `Store.fold`'s catch
+    per event, and the rest of the piece of the log was lost on every start.
     """
     for line in lines:
         if not line.strip():
             continue
         try:
             record = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
         if isinstance(record, dict):
             yield record
@@ -2415,7 +2419,7 @@ class Store:
                 best = other
         return best
 
-    def fold(self, events: Iterable[dict[str, Any]]) -> None:
+    def fold(self, events: Iterable[dict[str, Any]], save: bool = True) -> None:
         """Fold events in, forgetting sessions a week quiet as the log goes by.
 
         The log is never thrown away, so the first read is every session there
@@ -2446,7 +2450,9 @@ class Store:
             if session is not None and session.last_ts - self.forgot_at > FORGET_EVERY:
                 self.forgot_at = session.last_ts
                 self.forget_quiet(min(session.last_ts, time.time()))
-        self.save_names()
+        # The report folds to measure and must write nothing (`report_daemon`).
+        if save:
+            self.save_names()
 
     def follow(self) -> None:
         """Fold whatever has been appended since the last look."""
@@ -13106,6 +13112,9 @@ def cmd_files(args: argparse.Namespace) -> int:
 #: report may count. A value is counted only when it looks like a name.
 REPORT_KINDS = {
     "SessionStart": ("source",),
+    # Which API error ended a turn: an expired login's was not measured,
+    # so `Store.logged_in` reads the words too (#672).
+    "StopFailure": ("error",),
     "SessionEnd": ("reason",),
     "PreCompact": ("trigger",),
     "Notification": ("notification_type",),
@@ -13381,6 +13390,47 @@ def report_cost(measure: bool) -> list[str]:
     return out
 
 
+def report_daemon() -> list[str]:
+    """The report's daemon: what a start's read of the whole log costs on
+    this machine, and what it then holds and sends. Measured on a Store of
+    its own, as `catch_up` reads, and nothing is written: a running daemon
+    keeps its own. Made-up history (`tests/scale.py`) is no measure of a
+    real one."""
+    import resource
+
+    # Kilobytes on Linux, bytes on macOS.
+    unit = 1 if sys.platform == "darwin" else 1024
+    before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    store = Store()
+    started = time.monotonic()
+    store.fold(store.follower.new_events(), save=False)
+    read = time.monotonic() - started
+    grown = (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - before) * unit
+    files, size = store.follower.files_read()
+    # A tick's part that runs every second, git and pull requests left out:
+    # they run in the background, a directory at a time.
+    started = time.monotonic()
+    rows = store.render(store.settle(time.time()))
+    tick = time.monotonic() - started
+    push = len(json.dumps(rows, separators=(",", ":")).encode())
+    out = ["", "## Daemon", "",
+           "A start's read of the whole event log, timed here as `wostuast`"
+           " reads it, and what the daemon then holds and sends each time a"
+           " session changes.", ""]
+    out += report_table(("What", "Measured"), [
+        ("Events read", f"{store.follower.events} from {counted(files, 'file', 'files')}"
+                        f" ({size_label(size)})"),
+        ("Archives left out", f"{store.follower.left_out}, older than"
+                              f" {HISTORY_FOLDED // 86400} days"),
+        ("Read time", f"{read * 1000:.0f} ms"),
+        ("Memory the read grew by", size_label(max(grown, 0))),
+        ("Sessions held, shown", f"{len(store.sessions)}, {len(rows)}"),
+        ("One refresh without git", f"{tick * 1000:.0f} ms"),
+        ("One push of the session list", size_label(push)),
+    ])
+    return out
+
+
 def build_report(days: float, now: float | None = None,
                  measure: bool = True) -> str:
     """Everything an agent needs to improve wostuast for this machine, as
@@ -13410,6 +13460,9 @@ def build_report(days: float, now: float | None = None,
         f" last {days:g} days.",
     ]
 
+    # First, before the transcripts are read: the memory a read grew by is
+    # the peak of this process, and a later read would hide it.
+    daemon = report_daemon()
     shapes = transcript_shapes(recent_transcripts(days, now))
     tmux = (run(["tmux", "-V"]) or "").strip() or "not found"
     git = (run(["git", "--version"]) or "").strip() or "not found"
@@ -13441,6 +13494,7 @@ def build_report(days: float, now: float | None = None,
     out += report_events(days, now)
     out += report_transcripts(days, shapes)
     out += report_errors()
+    out += daemon
     out += report_cost(measure)
     return "\n".join(out) + "\n"
 
