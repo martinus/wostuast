@@ -12850,7 +12850,9 @@ def which_tmux() -> bool:
 #: else it leaves out, which is right for the lists below and wrong for any
 #: shape nobody has looked at yet.
 READ_RECORDS = {"user", "assistant", "summary", "attachment/queued_command",
-                "system/compact_boundary", "system/local_command", "system/away_summary"}
+                "system/compact_boundary", "system/local_command", "system/away_summary",
+                # Not a block: the sidebar's link to a pull request (#661).
+                "pr-link"}
 
 READ_PIECES = {"text", "thinking", "tool_use", "tool_result"}
 
@@ -12896,6 +12898,11 @@ class Shapes:
     versions: dict[str, int] = field(default_factory=dict)
     not_read: dict[str, int] = field(default_factory=dict)
     tags: dict[str, int] = field(default_factory=dict)
+    #: For each record the page does not show: the fields it carried, as
+    #: `field_paths` names them, and the bytes of all of them, so a reader
+    #: can be written for a real shape that no line of it leaves.
+    fields: dict[str, Counter[str]] = field(default_factory=dict)
+    sizes: dict[str, int] = field(default_factory=dict)
 
 
 def record_shape(record: dict[str, Any]) -> str:
@@ -12948,6 +12955,8 @@ def transcript_shapes(paths: Iterable[Path]) -> Shapes:
             if shape not in READ_RECORDS and record.get("type") not in READ_RECORDS:
                 if shape not in SILENT_RECORDS:
                     _count(found.not_read, shape)
+                    found.fields.setdefault(shape, Counter()).update(field_paths(record))
+                    found.sizes[shape] = found.sizes.get(shape, 0) + len(line.encode())
                 continue
             message = record.get("message")
             content = message.get("content") if isinstance(message, dict) else None
@@ -12979,6 +12988,46 @@ def transcript_shapes(paths: Iterable[Path]) -> Shapes:
                         continue
                     _count(found.tags, f"<{name}> in a {block.kind}")
     return found
+
+
+#: A field the shapes section names: a word as a schema writes one. A file
+#: name ("plan.md"), a path or an id is no field of a schema, and it is the
+#: reader's: "(other)".
+FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,40}")
+
+#: A dict with more keys than this is a map of the reader's things, not a
+#: schema: its keys are not named.
+FIELDS_MOST = 40
+
+
+def field_paths(value: Any, depth: int = 0) -> set[str]:
+    """The fields of a record and their kinds, never a value: "message:
+    object", "message.usage.input_tokens: number". Three levels down; a
+    list is read through its objects ("content[]")."""
+    found: set[str] = set()
+    if isinstance(value, list):
+        for one in value[:20]:
+            found |= {f"[]{inner}" for inner in field_paths(one, depth)}
+        return found
+    if not isinstance(value, dict) or depth >= 3:
+        return found
+    if len(value) > FIELDS_MOST:
+        return {f": map of {len(value)}"}
+    for key, inner in value.items():
+        name = key if isinstance(key, str) and FIELD_NAME.fullmatch(key) else "(other)"
+        found.add(f".{name}: {kind_named(inner)}")
+        found |= {f".{name}{one}" for one in field_paths(inner, depth + 1)}
+    return found if depth else {one.lstrip(".") for one in found}
+
+
+def kind_named(value: Any) -> str:
+    """What kind of value a field holds, as JSON calls it."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "bool"
+    return ("number" if isinstance(value, (int, float)) else "text" if isinstance(value, str)
+            else "list" if isinstance(value, list) else "object")
 
 
 def _count(counts: dict[str, int], name: str) -> None:
@@ -13272,17 +13321,30 @@ def report_events(days: float, now: float | None) -> list[str]:
     kinds: dict[str, Counter[str]] = {}
     tools: Counter[str] = Counter()
     sessions: set[str] = set()
+    # A `StopFailure` carries an `agent_id` and no `agent_type`: whose turn
+    # it ended decides whether the row may go amber (#672). A subagent's
+    # events carry its type, so its id is known from them.
+    subagents: set[tuple[str, str]] = set()
+    stopped: list[tuple[str, str]] = []
     for event in recent_events(days, now):
         name = named(event.get("hook_event_name"))
         events[name] += 1
         fields.setdefault(name, Counter()).update(named(key) for key in event)
         sessions.add(str(event.get("session_id") or ""))
+        agent = (str(event.get("session_id") or ""), str(event.get("agent_id") or ""))
+        if agent[1] and event.get("agent_type"):
+            subagents.add(agent)
+        if agent[1] and name == "StopFailure":
+            stopped.append(agent)
         if event.get("tool_name") is not None and name in ("PreToolUse", "PermissionRequest"):
             tools[tool_named(event.get("tool_name"))] += 1
         for field_name in REPORT_KINDS.get(name, ()):
             if field_name in event:
                 kinds.setdefault(f"{name}.{field_name}", Counter())[
                     named(event[field_name])] += 1
+    if stopped:
+        kinds["StopFailure.agent_id"] = Counter(
+            "a subagent's" if one in subagents else "no subagent's" for one in stopped)
     # What the fold reads: every hook event, and the ones wostuast writes
     # itself. A list of its own named `ModelAsked` "new" (#626), though the
     # fold read it.
@@ -13335,23 +13397,47 @@ def report_transcripts(days: float, shapes: Shapes) -> list[str]:
                              sorted(shapes.tags.items(), key=lambda one: -one[1])])
     if not shapes.not_read and not shapes.tags:
         out += ["", "Nothing the page does not know."]
+    if shapes.fields:
+        out += ["", "### Shapes of the records the page does not show", "",
+                "The fields each record carried and the kind of each, never a"
+                " value, and its average size: enough to write a reader for it.", ""]
+        out += report_table(("Record", "Average size", "Fields"), [
+            (labelled(name), size_label(shapes.sizes[name] // shapes.not_read[name]),
+             # Each piece of a path passed `FIELD_NAME` already.
+             ", ".join(f"{path} ({n})" if n < shapes.not_read[name] else path
+                       for path, n in sorted(shapes.fields[name].items())))
+            for name in sorted(shapes.fields, key=lambda one: -shapes.not_read[one])])
 
     return out
 
 
+#: The places in wostuast that log an error, by the fixed words that open
+#: the line, and what the report calls each. Only these words, never the
+#: rest of the line: it holds the command or the path.
+LOG_SITES = (
+    (re.compile(r"\d{4}-\d{2}-\d{2} [\d:]{8} the status line "),
+     "your own status line, run before wostuast's"),
+)
+
+
+def log_site(line: str) -> str:
+    """Where in wostuast a line of its log was written, or "-"."""
+    return next((said for pattern, said in LOG_SITES if pattern.match(line)), "-")
+
+
 def report_errors() -> list[str]:
     """The report's errors: what `wostuast.log` holds, by the exception
-    it names."""
+    it names and the place that logged it."""
     out: list[str] = []
-    errors: Counter[str] = Counter()
-    last: dict[str, str] = {}
+    errors: Counter[tuple[str, str]] = Counter()
+    last: dict[tuple[str, str], str] = {}
     for path in (log_path().with_name(log_path().name + ".1"), log_path()):
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         for line in text.splitlines():
-            kind = exception_named(line)
+            kind = (exception_named(line), log_site(line))
             errors[kind] += 1
             # The day, when the line starts with one: a line a newline in a
             # logged path began gave its first ten letters instead.
@@ -13361,8 +13447,8 @@ def report_errors() -> list[str]:
             "What `wostuast.log` holds, by the exception it names; the messages"
             " are left out, because they can hold paths and commands.", ""]
     if errors:
-        out += report_table(("Exception", "Lines", "Last day"),
-                            [(kind, n, last.get(kind, "-")) for kind, n in errors.most_common()])
+        out += report_table(("Exception", "Where", "Lines", "Last day"),
+                            [(*kind, n, last.get(kind, "-")) for kind, n in errors.most_common()])
     else:
         out.append("None.")
 
@@ -13426,7 +13512,8 @@ def report_daemon() -> list[str]:
         ("Memory the read grew by", size_label(max(grown, 0))),
         ("Sessions held, shown", f"{len(store.sessions)}, {len(rows)}"),
         ("One refresh without git", f"{tick * 1000:.0f} ms"),
-        ("One push of the session list", size_label(push)),
+        # A push sends only the rows that changed (#431).
+        ("The session list a page gets when it opens", size_label(push)),
     ])
     return out
 

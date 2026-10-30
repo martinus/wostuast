@@ -81,7 +81,7 @@ def test_the_report_times_the_daemon_and_writes_nothing(ws):
     assert "## Daemon" in said
     assert "| Events read | 4 from 1 file (" in said, said
     assert "| Sessions held, shown | 3, 2 |" in said, said
-    assert "| One push of the session list | " in said, said
+    assert "| The session list a page gets when it opens | " in said, said
 
 
 def test_what_the_review_found_does_not_leak_either(ws, tmp_path, monkeypatch):
@@ -102,8 +102,8 @@ def test_what_the_review_found_does_not_leak_either(ws, tmp_path, monkeypatch):
         {"match": "(?P<acmecorp payroll>x)", "url": "https://x.example/$1"}]}))
     said = ws.build_report(7, measure=False)
     assert "acmecorp" not in said.lower(), said
-    assert "| OSError | 1 |" in said, said
-    assert "| (other) | 2 |" in said, said
+    assert "| OSError | - | 1 |" in said, said
+    assert "| (other) | - | 2 |" in said, said
     assert "mcp__\u2026__create_issue" in said, said
     private = ws.private_paths()
     assert private("in /srv/elsewhere/acmecorp/x.txt") == "in <path>"
@@ -172,6 +172,62 @@ def test_the_report_knows_its_own_events_and_records_with_no_version(ws):
                     if line.startswith("| Claude Code, in transcripts"))
     assert "(none) (1)" in versions and "2.1.312 (1)" in versions, versions
     assert "(other)" not in versions
+
+
+def test_an_error_says_where_it_was_logged_and_never_the_command(ws):
+    """The reader's own status line, run before wostuast's, timed out 38
+    times in a month: the report said `TimeoutExpired` and nothing of
+    where, as the line holds the command. The fixed words that open the
+    line say where."""
+    ws.log("the status line 'secretive --flag' failed: TimeoutExpired('secretive --flag', 5)")
+    said = ws.build_report(7, measure=False)
+    assert ("| TimeoutExpired | your own status line, run before wostuast's | 1 |"
+            in said), said
+    assert "secretive" not in said
+
+
+def test_the_report_says_whether_a_subagent_s_api_error_ended_a_turn(ws):
+    """A `StopFailure` carries an `agent_id` and no `agent_type`, two of two
+    on the reader's machine: whose turn it ended decides whether the row may
+    go amber. A subagent's events carry its type, so its id is known."""
+    events(ws, bare_event("SubagentStart", agent_id="a1", agent_type="Explore"),
+           bare_event("StopFailure", agent_id="a1", error="overloaded"),
+           bare_event("StopFailure", agent_id="a2", error="overloaded"))
+    said = ws.build_report(7, measure=False)
+    line = next(one for one in said.splitlines() if one.startswith("| StopFailure.agent_id"))
+    assert "a subagent's (1)" in line and "no subagent's (1)" in line, line
+
+
+def test_the_report_gives_the_shape_of_a_record_the_page_does_not_show(ws):
+    """To write a reader for a record from transcripts that cannot be
+    shared: each field and its kind, three levels down, and the average
+    size, never a value. A file name, a path, or the keys of a map of the
+    reader's things are no field of a schema, and do not show. A pull
+    request's link is read, by the sidebar (#661), so it is not listed."""
+    folder = ws.settings_path().parent / "projects" / "-p"
+    folder.mkdir(parents=True)
+    record = {"type": "api-request", "requestId": "SECRETIVE-id",
+              "usage": {"input_tokens": 3, "note": "secretive words"},
+              "blocks": [{"kind": "secretive", "ok": True}, {"kind": None}],
+              "secretive.md": 1, "/home/secretive": 2,
+              "files": {f"secretive{n}": 1 for n in range(60)},
+              "a": {"b": {"c": {"deep": 1}}}}
+    (folder / "s1.jsonl").write_text(
+        json.dumps(record) + "\n" + json.dumps({**record, "later": 1}) + "\n"
+        + json.dumps({"type": "pr-link", "prNumber": 3, "prUrl": "https://x/pull/3"}) + "\n")
+    said = ws.build_report(7, measure=False)
+    assert "secretive" not in said.lower(), said
+    # The second line that names it: the first is the count.
+    line = [one for one in said.splitlines() if one.startswith("| api-request |")][-1]
+    # A field every record carried shows no count.
+    assert "blocks: list, blocks[].kind: null, blocks[].kind: text, blocks[].ok: bool" in line, line
+    assert "usage.input_tokens: number, usage.note: text" in line, line
+    assert "files: map of 60" in line and "(other): number" in line, line
+    assert "later: number (1)" in line, line
+    assert "a.b.c: object" in line and "deep" not in line, line
+    size = (len(json.dumps(record)) + len(json.dumps({**record, "later": 1}))) // 2
+    assert f"| api-request | {ws.size_label(size)} |" in line, line
+    assert "pr-link" not in said, said
 
 
 def test_an_error_is_named_by_its_class_from_the_library_too(ws):
