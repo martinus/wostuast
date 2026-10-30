@@ -17,6 +17,14 @@ What hooks, the status line and transcripts carry, and how to find out.
   theirs, save it under `tests/fixtures/`, and write the failing test
   against it first. **No payload in the report: ask for one first.**
 - **Never commit a real conversation**: this repository is public.
+- **Where no hook or record says it, read Claude Code's own code, and say
+  so**: `strings -n 6 "$(readlink -f "$(command -v claude)")" >
+  $S/strings.txt`, then `grep -o '.\{0,200\}NAME.\{0,200\}'` on it for
+  a setting, a record's `type` or a message. Idle compaction's moment,
+  where a prompt suggestion lives, and the recap's record were found so
+  (#673, #674, #675). Write the version and "not measured" beside what
+  you take from it, and measure it with `tests/claude_pane.py` when you
+  can. **Never read keys off it** (topics/state).
 - **Read more than one machine.** "A compaction writes a `summary` record"
   was false. A current build writes a `system` record with `subtype:
   "compact_boundary"`, then a `user` record with `isCompactSummary`

@@ -133,7 +133,7 @@ python3 tests/perturb.py breaks.json            # prove the new tests
 # before the push, in the background; $S is the session's scratchpad:
 set -o pipefail; for i in 1 2 3; do python3 -m pytest -q -n 12 -rf tests/test_page_review.py | tee -a $S/gate.txt | grep -E "^FAILED|passed|failed"; done
 python3 tests/page_coverage.py --check --names fnA,fnB tests/test_page_review.py -q -n 12  # new page functions (#622)
-set -o pipefail; python3 -m pytest -q -n auto -rf --ignore-glob='tests/test_page_*' | tee -a $S/gate.txt | grep -E "^FAILED|passed|failed"
+ruff check --isolated --target-version py310 --select F,B007 wostuast tests && set -o pipefail; python3 -m pytest -q -n auto -rf --ignore-glob='tests/test_page_*' | tee -a $S/gate.txt | grep -E "^FAILED|passed|failed"
 set -o pipefail; python3 -m pytest -q -n auto -rf | tee -a $S/gate.txt | grep -E "^FAILED|passed|failed"  # only when a shared part changed
 ```
 
