@@ -1489,6 +1489,9 @@ class Session:
     #: (#661). The daemon reads it behind the fold (`Store.reload_prs`), as
     #: it reads git: the fold does no I/O.
     pr: PrLink | None = None
+    #: When Claude Code would compact its conversation if it stays idle, or
+    #: 0: see `idle_compact_at`. Read behind the fold with `pr`.
+    idle_compact_at: float = 0.0
     #: The last prompt as an alert shows it, and the prompt it was made
     #: from: see `shown_prompt`.
     prompt_shown: tuple[str, str] = ("", "")
@@ -5527,11 +5530,14 @@ def pr_link_in(path: Path) -> PrLink | None:
 def read_prs(looked_at: dict[str, tuple[float, tuple[int, int]]],
              sessions: Sequence[Session]) -> None:
     """Give each shown session the pull request its transcript names
-    last (#661), read here as git is, never in the fold. A transcript is
+    last (#661), and when Claude Code would compact it while idle
+    (`idle_compact_at`), read here as git is, never in the fold. A
+    transcript is
     looked at again every `PR_EVERY` seconds, read only when it changed,
     and at most `PR_READS_A_TICK` in one refresh: a start with a month
     of sessions read every tail before the first push."""
     now, reads = time.monotonic(), 0
+    compacts: bool | None = None        # read once, and only for a read
     for session in sessions:
         looked = looked_at.get(session.session_id)
         if looked and now - looked[0] < PR_EVERY:
@@ -5552,6 +5558,81 @@ def read_prs(looked_at: dict[str, tuple[float, tuple[int, int]]],
         reads += 1
         looked_at[session.session_id] = (now, stamp)
         session.pr = pr_link_in(path)
+        if compacts is None:
+            compacts = idle_compaction_on()
+        session.idle_compact_at = idle_compact_at(last_request_in(path)) if compacts else 0.0
+
+
+# --- idle compaction: when Claude Code compacts a session that waits [topics/daemon-and-page]
+
+
+#: Claude Code's idle compaction, read off its 2.1.314 binary: it compacts
+#: a conversation of at least `IDLE_COMPACT_TOKENS` at `IDLE_COMPACT_SHARE`
+#: of the prompt cache's life after its last request, before the cache
+#: expires, and only for a 1-hour cache (`CACHE_HOUR`). Not measured.
+#: `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS` in the agent's environment moves
+#: the size, down to 100,000; that environment is not read.
+IDLE_COMPACT_TOKENS = 200_000
+IDLE_COMPACT_SHARE = 0.9
+CACHE_HOUR = 3600.0
+
+
+@dataclass
+class LastRequest:
+    """The last request of the main conversation, as its reply's `usage`
+    says it: when, which cache it wrote, and how big the context was."""
+
+    at: float
+    ttl: str            # "1h", "5m", or "" when it wrote no cache
+    tokens: int
+
+
+def last_request_in(path: Path) -> LastRequest | None:
+    """The last reply in the end of a transcript that used the API, or
+    None. A reply is a record a content block, each with the same `usage`,
+    so the last record is the reply's. A subagent's (`isSidechain`) and one
+    that used nothing (an error Claude Code wrote itself) are not it."""
+    found = None
+    for record in tail_records(path, b'"usage"'):
+        message = record.get("message")
+        usage = message.get("usage") if isinstance(message, dict) else None
+        if record.get("type") != "assistant" or record.get("isSidechain") or not isinstance(usage, dict):
+            continue
+        tokens = sum(to_int(usage.get(key)) for key in
+                     ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+        at = parse_timestamp(record.get("timestamp"))
+        if tokens and at:
+            found = LastRequest(at=at, ttl=cache_ttl(usage), tokens=tokens)
+    return found
+
+
+def cache_ttl(usage: dict[str, Any]) -> str:
+    """Which cache a request wrote, as Claude Code tells it: a 5-minute
+    write wins over a 1-hour one (its code, 2.1.314)."""
+    written = usage.get("cache_creation")
+    written = written if isinstance(written, dict) else {}
+    if to_int(written.get("ephemeral_5m_input_tokens")) > 0:
+        return "5m"
+    return "1h" if to_int(written.get("ephemeral_1h_input_tokens")) > 0 else ""
+
+
+def idle_compact_at(last: LastRequest | None) -> float:
+    """When Claude Code compacts the conversation if nothing is sent before,
+    or 0 when it would not: a 5-minute cache, or a context too small."""
+    if last is None or last.ttl != "1h" or last.tokens < IDLE_COMPACT_TOKENS:
+        return 0.0
+    return last.at + IDLE_COMPACT_SHARE * CACHE_HOUR
+
+
+def idle_compaction_on() -> bool:
+    """Whether the reader left idle compaction on: Claude Code's own notice
+    says to turn it off with `"idleCompaction": false` in its
+    settings.json. A file that cannot be read leaves it on, its default."""
+    try:
+        data, _, _ = load_settings(settings_path())
+    except (OSError, ValueError):
+        return True
+    return data.get("idleCompaction") is not False
 
 
 # --- worktree files: the listing, a file's text, a binary's hex [topics/files-tab, topics/safety]
@@ -9895,6 +9976,9 @@ def row(session: Session) -> dict[str, Any]:
         # Its pull request, a link after the branch (#661).
         "pr": ({"number": session.pr.number, "url": session.pr.url, "repo": session.pr.repo}
                if session.pr else None),
+        # When Claude Code would compact it if it stays idle, or 0: the
+        # context bar counts down to it.
+        "idle_compact_at": round(session.idle_compact_at, 3),
         **mark_fields(session),
         **status_fields(session),
         # The session a `/clear` turned this one into. The page follows it
@@ -15815,7 +15899,7 @@ body.sidechat .main > .chat {
    stay on one line and the buttons at the end stay on screen; the model
    stays, because it is a button. */
 @container (max-width: 560px) {
-  .ctxslot .ctx, .ctxslot .spent { display: none; }
+  .ctxslot .ctx, .ctxslot .spent, .ctxslot .compacts { display: none; }
 }
 .tab[aria-selected="true"] { color: var(--ink-bright); border-bottom-color: var(--needs); }
 .tab:disabled { color: var(--edge-bright); cursor: default; }
@@ -15844,6 +15928,10 @@ body.sidechat .main > .chat {
    are about what an agent is doing, and this is about what it has cost. */
 .spent { color: var(--ink-mute); font-size: 12px; white-space: nowrap;
   cursor: help; }
+/* When Claude Code compacts an idle session, beside the context it
+   shrinks. A clock, not a state, so no state colour either. */
+.ctxslot .compacts { color: var(--ink-mute); font-size: 12px;
+  white-space: nowrap; cursor: help; }
 /* The model and its effort, a button that opens `#modelpop` (issues 337
    and 338). It reads as the words it always was until the pointer is on it. */
 .ctxslot .model { color: var(--ink-mute); font-size: 12px; white-space: nowrap;
@@ -17901,6 +17989,34 @@ function putContext(parent, percent) {
   return ctx;
 }
 
+// When Claude Code compacts the session if it stays at its prompt, or 0:
+// only a ready one, as a turn or a dialog moves the moment, and only while
+// the moment is ahead.
+function idleCompactAt(s) {
+  const at = (s && s.state === "done" && s.idle_compact_at) || 0;
+  return at > Date.now() / 1000 + state.skew ? at : 0;
+}
+
+// The countdown to it, beside the context it shrinks. `tickCompacts` says
+// the time left, every second, as `tickAges` says a row's age.
+function putCompacts(parent, at) {
+  const node = put(parent, "span", "compacts");
+  node.dataset.at = String(at);
+  node.title = "If this session stays idle, Claude Code compacts it at "
+    + clock(at) + ": 54 minutes after its last request, before its"
+    + " 1-hour prompt cache expires. A prompt before then keeps the"
+    + " conversation whole. \"idleCompaction\": false in Claude Code's"
+    + " settings.json turns it off.";
+  tickCompacts(node);
+  return node;
+}
+
+function tickCompacts(node) {
+  const left = Number(node.dataset.at) - (Date.now() / 1000 + state.skew);
+  node.hidden = left <= 0;
+  node.textContent = "compacts in " + lasted(Math.max(0, left));
+}
+
 // What the daemon answered, on the one line the page keeps for saying
 // things. A failure stays.
 //
@@ -19724,6 +19840,7 @@ function tickAges() {
   for (const node of $("rows").querySelectorAll(".age[data-since]")) {
     node.textContent = ago(Number(node.dataset.since));
   }
+  for (const node of document.querySelectorAll("#ctxslot .compacts")) tickCompacts(node);
 }
 
 // The browser tab's title and icon, and the alerts: the answer to "who needs
@@ -20369,7 +20486,8 @@ function drawContext() {
   // percentage of, so it stands beside it. The status line sends it; without one there is nothing to say.
   const model = (s && s.model) || "";
   const effort = (s && s.effort) || "";
-  slot.hidden = !hasContext(s) && !spent && !model;
+  const compacts = idleCompactAt(s);
+  slot.hidden = !hasContext(s) && !spent && !model && !compacts;
   if (slot.hidden) {
     slot.replaceChildren();
     slot.dataset.shows = "";
@@ -20377,7 +20495,7 @@ function drawContext() {
     return;
   }
   const shows = [model, effort, hasContext(s) ? Math.round(s.context_pct) : "",
-                 spent].join("\n");
+                 spent, compacts].join("\n");
   if (!fresh(slot, "shows", shows)) return;  // a push a second, rarely moved
   slot.replaceChildren();
   // The model and how hard it thinks (issue 337), as one button that opens
@@ -20394,6 +20512,7 @@ function drawContext() {
     });
   }
   if (hasContext(s)) putContext(slot, s.context_pct);
+  if (compacts) putCompacts(slot, compacts);
   if (spent) {
     // Claude Code works this out on the client at list price and says so, and
     // it goes back to nought on `/clear`. The caveat is worth carrying and is
