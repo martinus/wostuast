@@ -47,7 +47,9 @@ throwaway home, and edit scripts for the one large file.
   main one only. Put before and after in one PNG, labelled:
   `tests/pair.py OUT before=OLD after=NEW --clip X,Y,W,H`. **While you wait, the stop hook asks for
   a commit and a push**: push the branch, which starts nothing, and open
-  the pull request after the yes.
+  the pull request after the yes. **Write that commit's message as
+  final**: a squash later needs a force-push, which is refused, so a
+  "work in progress" message stayed in `main`'s history (#675).
 - **Work in one file, with `WOSTUAST_WAIT=5000`**, so a wait for what
   never comes fails in five seconds, not thirty. Never in CI: a loaded
   runner needs the 15 s and 30 s waits.
