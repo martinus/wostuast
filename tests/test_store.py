@@ -125,6 +125,45 @@ def test_an_api_error_with_no_words_is_named_by_its_kind(ws, store):
     assert store.rows[0]["reason"] == "stopped: usage limit reached"
 
 
+def test_a_login_ends_every_amber_that_asked_for_one(ws, store):
+    """`/login` is a local command: it sends no prompt and starts no call,
+    so a row an expired login stopped stayed amber, "Please run /login",
+    after the login worked. Its `auth_success` notification goes to the
+    session it was typed into, but the sessions share one login: each one
+    it stopped goes to ready, whichever `error` named it or only its words
+    did. A stop a login does not lift stays, and so does a dialog, even
+    one that came after a login stop."""
+    def stopped(sid, ts, **why):
+        ws.append_event(event("UserPromptSubmit", sid=sid, prompt="go", ts=ts))
+        ws.append_event(recorded_stop_failure(session_id=sid, ts=ts + 1, **why))
+
+    stopped("s1", 1000.0, error="authentication_failed",
+            last_assistant_message="Not logged in")
+    stopped("s2", 1002.0, error="unknown",
+            last_assistant_message="Login expired · Please run /login")
+    stopped("s3", 1004.0, error="rate_limit", last_assistant_message="")
+    stopped("s4", 1006.0, error="authentication_failed",
+            last_assistant_message="Not logged in")
+    ws.append_event(event("UserPromptSubmit", sid="s4", prompt="go on", ts=1008.0))
+    ws.append_event(event("PermissionRequest", sid="s4", tool_name="Bash",
+                          tool_input={"command": "make"}, ts=1009.0))
+    store.refresh(now=1010.0, alive=lambda p: True)
+    rows = {row["id"]: row for row in store.rows}
+    assert {sid: row["state"] for sid, row in rows.items()} == dict.fromkeys(
+        ["s1", "s2", "s3", "s4"], "needs_you")
+
+    ws.append_event(event("Notification", sid="s2", notification_type="auth_success",
+                          message="Login successful", ts=1020.0))
+    store.refresh(now=1020.0, alive=lambda p: True)
+    rows = {row["id"]: row for row in store.rows}
+    for sid in ("s1", "s2"):
+        assert rows[sid]["state"] == "done", rows[sid]
+        assert rows[sid]["reason"] == "", rows[sid]
+        assert store.sessions[sid].state_since == 1020.0, sid
+    assert rows["s3"]["reason"] == "stopped: usage limit reached"
+    assert rows["s4"]["reason"] == "permission: Bash make"
+
+
 def test_git_runs_once_and_then_waits(ws, monkeypatch):
     calls: list[list[str]] = []
 

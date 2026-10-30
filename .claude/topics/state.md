@@ -15,8 +15,15 @@ dialog, `/clear`, attention, pids and panes.
     a stopped agent. The reason is `last_assistant_message`
     (`tests/fixtures/stop_failure.jsonl`), or `STOP_FAILURES` names the
     `error`. `doctor` flags an install that has not registered it.
+    **A login ends every amber that asked for one, in every session, and
+    those rows go to ready** (`Store.logged_in`, `Session.stopped_by`,
+    `LOGIN_STOPS`, `auth_success`): `/login` sends no prompt and starts no
+    call, so the row said "Please run /login" after the login worked, and
+    the sessions share one login. A stop a login does not lift (a usage
+    limit) stays, and so does a dialog.
     `test_an_api_error_ends_the_turn_and_says_why`,
-    `test_an_api_error_with_no_words_is_named_by_its_kind`.
+    `test_an_api_error_with_no_words_is_named_by_its_kind`,
+    `test_a_login_ends_every_amber_that_asked_for_one`.
 - **A question is a question, not a permission.** `AskUserQuestion`
   carries it whole in `tool_input`; `tool_target`'s catch-all clipped it.
   **`read_ask` sends only what the page draws, field by field**: a row goes

@@ -1501,6 +1501,11 @@ class Session:
     #: One of those tasks is a subagent, whose report is the agent's next
     #: step: such a row stays working while the prompt is idle (#488).
     waits_on_agents: bool = False
+    #: The `error` of the `StopFailure` that holds the row amber, or empty.
+    #: A login ends that amber when a login is what it asked for
+    #: (`Store.logged_in`): `/login` sends no prompt and starts no call, so
+    #: nothing else did. Cleared with the attention.
+    stopped_by: str = ""
     attention_since: float = 0.0
     # True once this session has sent a PermissionRequest. That event is
     # the same news as a permission Notification, up to twelve seconds
@@ -2217,6 +2222,8 @@ class Store:
             handler(session, event, ts)
         elif name:
             session.last_event = name
+        if name == "Notification" and event.get("notification_type") == "auth_success":
+            self.logged_in(ts)
         # After the handler: a subagent's tool call is summed up there once.
         note_subagent(session, event, name, ts)
         note_shells(session, event, name, ts)
@@ -2241,6 +2248,23 @@ class Store:
         if name == "SessionStart" and session.moved_from:
             self.link_move(session, ts)
         return session
+
+    def logged_in(self, moment: float) -> None:
+        """A login worked: every session it was asked for goes to ready.
+
+        `/login` is a local command, so no prompt and no call follows, and
+        the row stayed amber with "Please run /login" under it after the
+        login worked. The agent now waits at its prompt to be told to go
+        on, which is "ready". Every session, not only the one the login was
+        typed into: they share one login, and an expired one stops each of
+        them in turn. Only a stop that asked for a login ends: a usage limit
+        or a missing model is still there after one.
+        """
+        for session in self.sessions.values():
+            if session.stopped_by and (session.stopped_by in LOGIN_STOPS
+                                       or "/login" in session.reason):
+                become(session, "done", moment or session.last_ts)
+                session.last_event = "logged in"
 
     def note_origin(self, session: Session, event: dict[str, Any], name: str) -> None:
         """Which agent started this one, and whether it runs in the
@@ -2812,6 +2836,7 @@ def _clear_attention(session: Session) -> None:
     session.reason = ""
     session.waits_on_tasks = False
     session.waits_on_agents = False
+    session.stopped_by = ""
     session.asked_about = ""
     session.asking = None
     session.permission = None
@@ -3345,6 +3370,12 @@ STOP_FAILURES = {
 }
 
 
+#: The `StopFailure` errors a login can end (`Store.logged_in`). Claude
+#: Code's own words for a stop that asks for one say "/login", which is
+#: read too: which `error` an expired login sends was not measured.
+LOGIN_STOPS = frozenset({"authentication_failed", "oauth_org_not_allowed"})
+
+
 def _on_stop_failure(session: Session, event: dict[str, Any], ts: float) -> None:
     """A turn an API error ended: a spend limit, a login, an overload.
 
@@ -3363,6 +3394,7 @@ def _on_stop_failure(session: Session, event: dict[str, Any], ts: float) -> None
     words = clip(said.strip().split("\n")[0], 200)
     session.attention_since = ts
     session.reason = "stopped: " + (words or STOP_FAILURES.get(error, error))
+    session.stopped_by = error
     session.last_event = f"stopped by an API error ({error})"
     session.ended_at = ts
     # Its last words are Claude Code's sentence about the error: the turn
