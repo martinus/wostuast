@@ -119,6 +119,13 @@ Install and update, the hook and status files, Claude Code's
   `test_doctor_says_and_a_start_mends_an_installed_copy_of_another_version`,
   `test_a_start_with_nothing_behind_writes_nothing`,
   `test_a_start_stops_on_a_settings_file_it_cannot_read`.
+  - **A restart is asked for only when the hooks or the status line in
+    `settings.json` changed, and names them** (`restart_said`): a session
+    reads those when it starts, and runs the program, the hook file and
+    the status file fresh on each event. After an update of the program
+    alone, the start sent the reader to restart every session for nothing.
+    `test_install_asks_for_a_restart_only_when_settings_changed`,
+    `test_a_start_brings_everything_up_to_date_and_says_so_in_a_line`.
   - **`doctor`, the start and `report` read one table of checks**
     (`SETUP_CHECKS`, `setup_checks`, `Check`, #549): copies in
     `doctor_checks` and the start drifted. A check is a function of

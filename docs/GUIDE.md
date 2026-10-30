@@ -192,13 +192,15 @@ wostuast · 2026-10-01 · 2a5ca39
 ```
 
 It writes nothing that is already right, so a start with nothing to fix
-leaves `~/.claude/settings.json` alone. After it did update something,
-restart your Claude Code sessions.
+leaves `~/.claude/settings.json` alone. When it changed the hooks or the
+status line there, it asks you to restart your Claude Code sessions: a
+session reads them only when it starts. An update of the program, the hook
+file or the status file needs no restart, as each event runs them fresh.
 
 **3. Update.** Run `wostuast install` again. It asks GitHub for the newest
 wostuast, and when that is not the copy you have, it installs it and prints
 the version before and after. Without a network, it says so and installs the
-copy you have. Then restart your Claude Code sessions.
+copy you have. When it says so, restart your Claude Code sessions.
 
 ```sh
 wostuast install
