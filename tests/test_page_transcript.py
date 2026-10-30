@@ -1130,9 +1130,10 @@ def test_a_message_sent_to_a_busy_agent_reads_as_what_you_typed(ws, page_at):
 def test_claude_code_s_recap_is_drawn_quietly_where_it_was_written(page_at):
     """The recap for a reader back from away (#674), where it was written,
     as the reader chose: dim, named "recap", as Markdown, and not a round
-    or a reply in the map."""
+    or a reply in the map. A note beside it is still named "system"."""
     daemon, path = page_at
-    write_records(daemon, {"type": "system", "subtype": "away_summary",
+    write_records(daemon, conftest.record("you", "[Request interrupted by user]"),
+                  {"type": "system", "subtype": "away_summary",
                            "timestamp": "2026-09-18T14:40:00.000Z", "uuid": "u1",
                            "isMeta": False,
                            "content": "Built **the cache**. (disable recaps in /config)"})
@@ -1145,9 +1146,12 @@ def test_claude_code_s_recap_is_drawn_quietly_where_it_was_written(page_at):
                   who: turn.querySelector('.who .self').textContent,
                   text: turn.querySelector('.bubble').innerText.trim(),
                   rows: [...document.querySelectorAll('.filelist.transcript button')]
-                          .map((one) => one.title)};
+                          .map((one) => one.title),
+                  asides: [...document.querySelectorAll('.turn.aside .who .self')]
+                            .map((one) => one.textContent)};
         }""")
         assert seen["aside"] and seen["who"] == "recap", seen
+        assert seen["asides"] == ["system", "recap"], seen
         assert seen["text"] == "Built the cache.", seen
         assert not any("cache" in one for one in seen["rows"]), seen
 

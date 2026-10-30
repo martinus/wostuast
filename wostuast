@@ -22020,6 +22020,10 @@ function putTurnActs(node, block, index, shell, aside, mine) {
   return asText;
 }
 
+// What an aside is named in the who column: the harness, or Claude Code's
+// recap for a reader back from away (#674).
+const ASIDE_NAMES = { note: "system", recap: "recap" };
+
 function blockTurn(block, index) {
   if (block.kind === "divider") {
     const node = document.createElement("div");
@@ -22043,10 +22047,8 @@ function blockTurn(block, index) {
   // drawn the same way, because its answer is output in the fixed face.
   const shell = block.kind === "shell" || block.kind === "command";
   const mine = block.kind === "prompt" || shell;
-  // Something the harness said, not the reader and not the agent: a note,
-  // or Claude Code's recap for a reader back from away (#674).
-  const recap = block.kind === "recap";
-  const aside = block.kind === "note" || recap;
+  // Something the harness said, not the reader and not the agent (a recap: #674).
+  const aside = block.kind === "note" || block.kind === "recap";
   // The agent's plan, asking to start (#372): its words, as a document.
   const plan = block.kind === "plan";
   const node = document.createElement("div");
@@ -22059,7 +22061,7 @@ function blockTurn(block, index) {
   // A subagent's first prompt is the agent's task for it, not the
   // reader's, and a link would name a block of the session's (#618).
   const name = put(who, "a", "self", mine ? (state.agent ? "task" : "you")
-                   : recap ? "recap" : aside ? "system" : plan ? "plan" : "claude");
+                   : aside ? ASIDE_NAMES[block.kind] : plan ? "plan" : "claude");
   if (!state.agent) name.href = blockHref(index);
   name.title = "link to this " + (mine ? "prompt"
                                        : aside ? "message" : plan ? "plan" : "reply");
