@@ -4004,7 +4004,8 @@ class Block:
     """One thing the Transcript tab shows, in the order it happened."""
 
     seq: int = -1               # its place in the transcript, and its identity
-    #: prompt, text, tool, divider, note, shell, plan. A `plan` is an
+    #: prompt, text, tool, divider, note, shell, plan, recap. A `recap` is
+    #: Claude Code's summary for a reader back from away (#674). A `plan` is an
     #: `ExitPlanMode` call: `text` is the plan, as Markdown. A `note` is a
     #: `user` record the harness wrote -- a task finishing, another session's
     #: message -- so it is shown but never as something the reader typed. A
@@ -4594,6 +4595,17 @@ class Transcript:
         self.blocks.append(block)
         return block
 
+    def add_recap(self, record: dict[str, Any]) -> list[Block]:
+        """Claude Code's recap, at its place in the transcript (#674): the
+        reader asked to see it, and not in the way. Its shape is the one
+        `away_summary_in` reads (#662), without the words Claude Code adds
+        for its own terminal."""
+        text = record.get("content")
+        if not isinstance(text, str) or not text.strip():
+            return []
+        return [self.keep(Block(kind="recap", text=text.removesuffix(AWAY_SAID_TOO).strip(),
+                                ts=parse_timestamp(record.get("timestamp"))))]
+
     def add(self, record: dict[str, Any]) -> list[Block]:
         """One line of the transcript, folded into the blocks.
 
@@ -4622,6 +4634,8 @@ class Transcript:
                 block = self.user_block(
                     content, parse_timestamp(record.get("timestamp")), False)
                 return [block] if block else []
+            if subtype == "away_summary":
+                return self.add_recap(record)
             if subtype != "compact_boundary":
                 return []
             # With its moment (#499): when the agent forgot is half of what
@@ -12830,7 +12844,7 @@ def which_tmux() -> bool:
 #: else it leaves out, which is right for the lists below and wrong for any
 #: shape nobody has looked at yet.
 READ_RECORDS = {"user", "assistant", "summary", "attachment/queued_command",
-                "system/compact_boundary", "system/local_command"}
+                "system/compact_boundary", "system/local_command", "system/away_summary"}
 
 READ_PIECES = {"text", "thinking", "tool_use", "tool_result"}
 
@@ -22029,8 +22043,10 @@ function blockTurn(block, index) {
   // drawn the same way, because its answer is output in the fixed face.
   const shell = block.kind === "shell" || block.kind === "command";
   const mine = block.kind === "prompt" || shell;
-  // Something the harness said, not the reader and not the agent.
-  const aside = block.kind === "note";
+  // Something the harness said, not the reader and not the agent: a note,
+  // or Claude Code's recap for a reader back from away (#674).
+  const recap = block.kind === "recap";
+  const aside = block.kind === "note" || recap;
   // The agent's plan, asking to start (#372): its words, as a document.
   const plan = block.kind === "plan";
   const node = document.createElement("div");
@@ -22043,7 +22059,7 @@ function blockTurn(block, index) {
   // A subagent's first prompt is the agent's task for it, not the
   // reader's, and a link would name a block of the session's (#618).
   const name = put(who, "a", "self", mine ? (state.agent ? "task" : "you")
-                   : aside ? "system" : plan ? "plan" : "claude");
+                   : recap ? "recap" : aside ? "system" : plan ? "plan" : "claude");
   if (!state.agent) name.href = blockHref(index);
   name.title = "link to this " + (mine ? "prompt"
                                        : aside ? "message" : plan ? "plan" : "reply");

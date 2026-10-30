@@ -1127,6 +1127,31 @@ def test_a_message_sent_to_a_busy_agent_reads_as_what_you_typed(ws, page_at):
                     if "while you were working" in one], seen["rows"]
 
 
+def test_claude_code_s_recap_is_drawn_quietly_where_it_was_written(page_at):
+    """The recap for a reader back from away (#674), where it was written,
+    as the reader chose: dim, named "recap", as Markdown, and not a round
+    or a reply in the map."""
+    daemon, path = page_at
+    write_records(daemon, {"type": "system", "subtype": "away_summary",
+                           "timestamp": "2026-09-18T14:40:00.000Z", "uuid": "u1",
+                           "isMeta": False,
+                           "content": "Built **the cache**. (disable recaps in /config)"})
+    daemon.tick()
+    with opened(path) as page:
+        page.wait_for_selector(".turn.aside .bubble strong")
+        seen = page.evaluate("""() => {
+          const turn = [...document.querySelectorAll('.turn')].at(-1);
+          return {aside: turn.classList.contains('aside'),
+                  who: turn.querySelector('.who .self').textContent,
+                  text: turn.querySelector('.bubble').innerText.trim(),
+                  rows: [...document.querySelectorAll('.filelist.transcript button')]
+                          .map((one) => one.title)};
+        }""")
+        assert seen["aside"] and seen["who"] == "recap", seen
+        assert seen["text"] == "Built the cache.", seen
+        assert not any("cache" in one for one in seen["rows"]), seen
+
+
 def test_a_note_is_not_drawn_as_something_you_typed(ws, page_at, tmp_path):
     """A background task finishing is real news and nobody typed it. It used
     to wear your rail and your tint, and it filled the map beside the
