@@ -1070,6 +1070,22 @@ def test_a_session_is_given_its_idle_compaction_behind_the_fold(ws, transcript_f
     assert store.rows[0]["idle_compact_at"] == 0
 
 
+def test_a_session_is_given_its_cache_s_lifetime_behind_the_fold(ws, transcript_file):
+    """The context bar says how long the last request's cache lasts, so the
+    reader knows when a reply writes the whole context again. Said with
+    idle compaction off too: the rewrite comes either way."""
+    path = transcript_file("s1", [reply(time.time() - 60, ttl="5m")])
+    ws.append_event(conftest.event("SessionStart", ts=time.time(), transcript_path=str(path)))
+    ws.settings_path().write_text(json.dumps({"idleCompaction": False}))
+    store = ws.Store()
+    store.refresh()
+    assert store.rows[0]["cache_ttl"] == "5m"
+    path.write_text(conftest.records(reply(time.time() - 60, ttl="")))
+    store = ws.Store()
+    store.refresh()
+    assert store.rows[0]["cache_ttl"] == "", "no cache written, no lifetime known"
+
+
 def recap(text, at):
     """An `away_summary` record in the shape Claude Code's schema gives
     (2.1.312): no real one was measured, as the owner chose (#662)."""

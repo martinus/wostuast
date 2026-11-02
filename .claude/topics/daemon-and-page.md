@@ -262,3 +262,14 @@ the loaders.
   `test_idle_compaction_comes_54_minutes_after_a_long_conversation_s_last_request`,
   `test_a_session_is_given_its_idle_compaction_behind_the_fold`,
   `test_the_context_bar_counts_down_to_idle_compaction`.
+- **The context bar says how long the last request's prompt cache lasts,
+  `cache 5m` or `cache 1h`** (`cache_ttl`, `Session.cache_ttl`,
+  `putCache`, `CACHE_LIFE`): a reply after it writes the whole context to
+  the cache again, at 1.25 times the input price, and idle compaction
+  covers only a 1-hour cache of 200,000 tokens or more. The reader asked
+  for it to stay in a monthly allowance, and kept it beside `compacts`.
+  Read with it, behind the fold, **and with idle compaction off too**: the
+  rewrite comes either way. A lifetime not in `CACHE_LIFE` shows nothing,
+  and the hover says the price.
+  `test_a_session_is_given_its_cache_s_lifetime_behind_the_fold`,
+  `test_the_context_bar_says_how_long_the_cache_lasts`.
