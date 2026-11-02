@@ -334,7 +334,8 @@ def test_the_context_bar_counts_down_to_idle_compaction(ws, page_at, monkeypatch
         # Beside the context it shrinks, before the spend.
         assert page.evaluate("""() => [...document.getElementById('ctxslot').children]
                                         .map((one) => one.className)""") \
-            == ["model", "ctx", "compacts", "spent"]
+            == ["model", "ctx", "cache", "compacts", "spent"]
+        assert page.locator("#ctxslot .cache").inner_text() == "cache 1h"
         # The moment comes: the tick takes it away.
         page.evaluate("""() => {
           document.querySelector('#ctxslot .compacts').dataset.at =
@@ -344,6 +345,24 @@ def test_the_context_bar_counts_down_to_idle_compaction(ws, page_at, monkeypatch
         page.evaluate("""() => { patchSession("s1", {state: "working",
           idle_compact_at: Date.now() / 1000 + state.skew + 600}); drawHeader(); }""")
         page.wait_for_function("!document.querySelector('#ctxslot .compacts')")
+
+
+def test_the_context_bar_says_how_long_the_cache_lasts(page_at):
+    """A reply after the cache's life writes the whole context to it again,
+    so the bar says the lifetime, and its hover says what that costs. An
+    unknown lifetime says nothing."""
+    _, path = page_at
+    with opened(path) as page:
+        page.wait_for_selector("#ctxslot .ctx")
+        assert page.locator("#ctxslot .cache").count() == 0
+        page.evaluate("""() => { patchSession("s1", {cache_ttl: "5m"}); drawHeader(); }""")
+        shown = page.locator("#ctxslot .cache")
+        shown.wait_for()
+        assert shown.inner_text() == "cache 5m"
+        assert "5 minutes" in shown.get_attribute("title")
+        assert "1.25 times" in shown.get_attribute("title")
+        page.evaluate("""() => { patchSession("s1", {cache_ttl: "9m"}); drawHeader(); }""")
+        page.wait_for_function("!document.querySelector('#ctxslot .cache')")
 
 
 def test_a_session_that_was_told_no_cost_shows_none(ws, served):

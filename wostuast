@@ -1496,6 +1496,9 @@ class Session:
     #: When Claude Code would compact its conversation if it stays idle, or
     #: 0: see `idle_compact_at`. Read behind the fold with `pr`.
     idle_compact_at: float = 0.0
+    #: How long the prompt cache of its last request lasts: "5m", "1h", or
+    #: "" when unknown (`cache_ttl`). Read behind the fold with `pr`.
+    cache_ttl: str = ""
     #: The last prompt as an alert shows it, and the prompt it was made
     #: from: see `shown_prompt`.
     prompt_shown: tuple[str, str] = ("", "")
@@ -5586,7 +5589,11 @@ def read_prs(looked_at: dict[str, tuple[float, tuple[int, int]]],
         session.pr = pr_link_in(path)
         if compacts is None:
             compacts = idle_compaction_on()
-        session.idle_compact_at = idle_compact_at(last_request_in(path)) if compacts else 0.0
+        last = last_request_in(path)
+        # The lifetime is said with idle compaction off too: a reply after
+        # it writes the whole context to the cache again, compaction or not.
+        session.cache_ttl = last.ttl if last else ""
+        session.idle_compact_at = idle_compact_at(last) if compacts else 0.0
 
 
 # --- idle compaction: when Claude Code compacts a session that waits [topics/daemon-and-page]
@@ -10005,6 +10012,9 @@ def row(session: Session) -> dict[str, Any]:
         # When Claude Code would compact it if it stays idle, or 0: the
         # context bar counts down to it.
         "idle_compact_at": round(session.idle_compact_at, 3),
+        # How long the prompt cache of its last request lasts, "5m" or
+        # "1h", or "": the context bar says it.
+        "cache_ttl": session.cache_ttl,
         **mark_fields(session),
         **status_fields(session),
         # The session a `/clear` turned this one into. The page follows it
@@ -16077,7 +16087,7 @@ body.sidechat .main > .chat {
    stay on one line and the buttons at the end stay on screen; the model
    stays, because it is a button. */
 @container (max-width: 560px) {
-  .ctxslot .ctx, .ctxslot .spent, .ctxslot .compacts { display: none; }
+  .ctxslot .ctx, .ctxslot .spent, .ctxslot .compacts, .ctxslot .cache { display: none; }
 }
 .tab[aria-selected="true"] { color: var(--ink-bright); border-bottom-color: var(--needs); }
 .tab:disabled { color: var(--edge-bright); cursor: default; }
@@ -16107,8 +16117,9 @@ body.sidechat .main > .chat {
 .spent { color: var(--ink-mute); font-size: 12px; white-space: nowrap;
   cursor: help; }
 /* When Claude Code compacts an idle session, beside the context it
-   shrinks. A clock, not a state, so no state colour either. */
-.ctxslot .compacts { color: var(--ink-mute); font-size: 12px;
+   shrinks, and how long its cache lasts. A clock, not a state, so no state
+   colour either. */
+.ctxslot .compacts, .ctxslot .cache { color: var(--ink-mute); font-size: 12px;
   white-space: nowrap; cursor: help; }
 /* The model and its effort, a button that opens `#modelpop` (issues 337
    and 338). It reads as the words it always was until the pointer is on it. */
@@ -18185,6 +18196,19 @@ function putCompacts(parent, at) {
     + " conversation whole. \"idleCompaction\": false in Claude Code's"
     + " settings.json turns it off.";
   tickCompacts(node);
+  return node;
+}
+
+// How long the prompt cache of the last request lasts, after the context
+// it holds: a reply after that writes the whole context to the cache again.
+const CACHE_LIFE = {"5m": "5 minutes", "1h": "1 hour"};
+function putCache(parent, ttl) {
+  const node = put(parent, "span", "cache", "cache " + ttl);
+  node.title = "Claude Code wrote this session's last request to a prompt"
+    + " cache that lasts " + CACHE_LIFE[ttl] + " after it. A prompt in that"
+    + " time reads the context from the cache, at a tenth of the input price."
+    + " A prompt after it writes the whole context to the cache again, at"
+    + " 1.25 times the input price.";
   return node;
 }
 
@@ -20665,7 +20689,8 @@ function drawContext() {
   const model = (s && s.model) || "";
   const effort = (s && s.effort) || "";
   const compacts = idleCompactAt(s);
-  slot.hidden = !hasContext(s) && !spent && !model && !compacts;
+  const cache = (s && CACHE_LIFE[s.cache_ttl] && s.cache_ttl) || "";
+  slot.hidden = !hasContext(s) && !spent && !model && !compacts && !cache;
   if (slot.hidden) {
     slot.replaceChildren();
     slot.dataset.shows = "";
@@ -20673,7 +20698,7 @@ function drawContext() {
     return;
   }
   const shows = [model, effort, hasContext(s) ? Math.round(s.context_pct) : "",
-                 spent, compacts].join("\n");
+                 spent, compacts, cache].join("\n");
   if (!fresh(slot, "shows", shows)) return;  // a push a second, rarely moved
   slot.replaceChildren();
   // The model and how hard it thinks (issue 337), as one button that opens
@@ -20690,6 +20715,7 @@ function drawContext() {
     });
   }
   if (hasContext(s)) putContext(slot, s.context_pct);
+  if (cache) putCache(slot, cache);
   if (compacts) putCompacts(slot, compacts);
   if (spent) {
     // Claude Code works this out on the client at list price and says so, and
