@@ -189,8 +189,35 @@ def test_git_runs_once_and_then_waits(ws, monkeypatch):
     assert len(calls) == 2
 
 
+def test_a_session_that_starts_reads_git_again(ws, monkeypatch):
+    """The reader started Claude Code in a fresh repository, and the row
+    showed only the folder's name: an earlier session had read the folder
+    before it was a repository, and git was read again only after a turn
+    ended or a writing tool ran. A session that has only started has done
+    neither, so its row kept the empty facts until its first turn ended."""
+    calls: list[list[str]] = []
+
+    def fake(dirs):
+        calls.append(sorted(dirs))
+        facts = ws.GitFacts() if len(calls) == 1 else ws.GitFacts(repo="dir", branch="main")
+        return {d: facts for d in dirs}
+
+    monkeypatch.setattr(ws, "git_facts_many", fake)
+    store = ws.Store()
+    ws.append_event(event("SessionStart", ts=1000.0))
+    store.refresh(now=1000.0, alive=lambda p: True)
+    assert store.rows[0]["branch"] == ""
+    # `git init`, then a new session in the same folder.
+    ws.append_event(event("SessionStart", sid="s2", pid=5151, ts=1020.0))
+    store.refresh(now=1020.0, alive=lambda p: True)
+    rows = {row["id"]: row for row in store.rows}
+    assert len(calls) == 2
+    assert rows["s2"]["branch"] == "main" and rows["s2"]["repo"] == "dir", rows["s2"]
+
+
 def test_only_writing_tools_ask_for_git(ws):
     assert ws.touched_the_tree("Stop", {})
+    assert ws.touched_the_tree("SessionStart", {})
     assert ws.touched_the_tree("PostToolUse", {"tool_name": "Edit"})
     assert ws.touched_the_tree("PostToolUse", {"tool_name": "Bash"})
     assert not ws.touched_the_tree("PostToolUse", {"tool_name": "Read"})

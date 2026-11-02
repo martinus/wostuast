@@ -165,6 +165,12 @@ diff.
   session had, as `add_git_facts` (`ls`, `wait`) once did.
   `test_the_row_counts_the_changed_files_the_files_tab_marks`,
   `test_only_one_function_runs_git_status`.
+  - **Git is read again when a turn ends, a writing tool ran, or a
+    session starts** (`touched_the_tree`), each held to
+    `GIT_MIN_INTERVAL`: a folder read before it was a repository kept its
+    empty facts for a new session there, whose row showed only the
+    folder's name until its first turn ended.
+    `test_a_session_that_starts_reads_git_again`.
   - **The tick never waits on git** (`GitReader`, #550): a slow
     `git status` in `reload_git` held every push. The daemon's `Store`
     reads behind (`GitReader(behind=True)`) and the next tick takes what
