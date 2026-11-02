@@ -2755,8 +2755,14 @@ def note_where(session: Session, event: dict[str, Any], name: str,
 
 
 def touched_the_tree(event_name: str, event: dict[str, Any]) -> bool:
-    """True when this event suggests the working tree may have changed."""
-    if event_name in ("Stop", "StopFailure"):
+    """True when this event suggests the working tree may have changed.
+
+    A session that starts too: a folder read before it was a repository,
+    by an earlier session there, kept its empty facts for a new one, as a
+    session that has only started has ended no turn and run no tool. Its
+    row showed the folder's name and no branch until its first turn ended.
+    """
+    if event_name in ("Stop", "StopFailure", "SessionStart"):
         return True
     if event_name in ("PostToolUse", "PostToolUseFailure"):
         return str(event.get("tool_name") or "") in WRITING_TOOLS
