@@ -1000,6 +1000,52 @@ def test_the_statistics_tab_uses_a_wide_screen(ws, page_at):
           return two.getBoundingClientRect().top >= one.getBoundingClientRect().bottom; }""")
 
 
+def test_the_costliest_turns_and_the_slowest_calls_have_bars(ws, page_at):
+    """Time by tool had a bar a line, and the costliest turns and the
+    slowest calls had none (#685). Each line now has one, as long as its
+    share of the most in its list; a turn's tokens are on a hover."""
+    daemon, path = page_at
+
+    def turn(said, mid, out, tool_id):
+        made = conftest.record("tool", "make", tool_id=tool_id)
+        made["message"].update(id=mid, usage=dict(input_tokens=40, output_tokens=out,
+                                                  cache_read_input_tokens=50000))
+        return [conftest.record("you", said), made,
+                conftest.record("result", "ok", tool_id=tool_id)]
+
+    write_records(daemon, *turn("Rename the parser.", "m1", 9000, "g1"),
+                  *turn("Fix the test.", "m2", 900, "g2"))
+    for tool_id, took in (("g1", 30_000), ("g2", 3_000)):
+        ws.append_event(conftest.event("PostToolUse", ts=time.time(), pane="%7", pid=1,
+                                       tool_name="Bash", tool_use_id=tool_id,
+                                       tool_input={"command": f"make {tool_id}"},
+                                       duration_ms=took))
+    daemon.store.refresh()
+    with opened(path) as page:
+        wait_for_map(page)
+        page.keyboard.press("4")
+        page.wait_for_selector(".sumline.turnlink >> text=make g2")
+
+        def bars(title):
+            return page.evaluate("""(title) => {
+              const card = [...document.querySelectorAll('.sumcard')]
+                .find((one) => one.querySelector('.sumtitle').textContent === title);
+              return [...card.querySelectorAll('.sumline')].map((line) => [
+                line.querySelector('.sumbar') ? line.querySelector('.sumbar').style.width : '',
+                line.querySelector('.sumsaid').textContent, line.title]); }""", title)
+
+        turns = bars("costliest turns")
+        assert turns[0][:2] == ["100%", "Rename the parser."], turns
+        # The tokens on a hover, as the reader chose: after the prompt, a
+        # long one cut them off.
+        assert turns[0][2].startswith("9k out \u00b7 ") and "show this turn" in turns[0][2], turns
+        # 900 out weighs a fifth of 9k out, with the same input and cache.
+        assert 2 < int(turns[1][0][:-1]) < 50, turns
+        slow = bars("slowest calls, a second or more")
+        assert [one[:2] for one in slow] == [["100%", "Bash \u00b7 make g1"],
+                                             ["10%", "Bash \u00b7 make g2"]], slow
+
+
 def test_the_statistics_tab_draws_the_month_against_the_allowance(ws, page_at):
     """What all sessions spent this month (#653), under the session's own
     numbers: the day's spend is how much each session's total grew, the
