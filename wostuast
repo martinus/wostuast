@@ -15899,6 +15899,9 @@ body.switching #content::after {
 .spenddot { fill: var(--spend); stroke: var(--bg); stroke-width: 2; }
 .spendday { fill: var(--spend); }
 .spendhit { fill: transparent; }
+.spendweekend { fill: color-mix(in srgb, var(--ink) 4%, transparent); }
+.spendwday { fill: var(--ink-faint); font-family: var(--sans); font-size: 10px; }
+.spendwday.weekend { fill: var(--ink-mute); }
 .spendhit:hover { fill: color-mix(in srgb, var(--ink) 6%, transparent); }
 /* The tab has no list column, so no find box: its home stays empty. */
 body:has(.content[data-tab="summary"]) .findhome { display: none; }
@@ -27653,6 +27656,9 @@ function putSpend(pane, spend, allowance) {
   putStat(head, money(spend.days[spend.days.length - 1]), "today");
   putStat(head, money(pace), "at this pace",
           "the month, if each day to come costs what the days so far did on average");
+  const workdays = workdaysLeft(spend);
+  putStat(head, String(workdays), workdays === 1 ? "workday left" : "workdays left",
+          "Monday to Friday, after today, to the end of the month");
   if (allowance) {
     putStat(head, money(allowance), "allowance", ALLOWANCE_WHERE);
     const left = allowance - spent;
@@ -27688,8 +27694,25 @@ function putSvg(parent, tag, attrs) {
 }
 
 // A chart's frame: drawn at this width and scaled to the pane's, with room
-// for the dollars on the left and the end labels on the right.
-const CHART = { width: 900, left: 52, right: 120, top: 12, bottom: 24 };
+// for the dollars on the left, the end labels on the right, and two rows of
+// days under it: the weekday, then the date (#684).
+const CHART = { width: 900, left: 52, right: 120, top: 12, bottom: 38 };
+
+// The weekday of a day of the month the daemon names, 0 for Sunday.
+function spendWeekday(spend, day) {
+  const [year, month] = spend.today.split("-").map(Number);
+  return new Date(year, month - 1, day).getDay();
+}
+
+// The workdays after today to the month's end, Monday to Friday (#684).
+function workdaysLeft(spend) {
+  let left = 0;
+  for (let day = spend.days.length + 1; day <= spend.length; day += 1) {
+    const weekday = spendWeekday(spend, day);
+    if (weekday !== 0 && weekday !== 6) left += 1;
+  }
+  return left;
+}
 
 // A chart of one month: its box, its scales, the dollar lines and the days
 // under it. `most` is the highest amount it must hold.
@@ -27702,6 +27725,14 @@ function putMonthChart(pane, spend, height, most, ticks, label) {
   const top = Math.max(step, Math.ceil(most / step) * step);
   const chart = { svg, x: (day) => CHART.left + day / spend.length * wide,
                   y: (usd) => CHART.top + tall - usd / top * tall, slot: wide / spend.length };
+  // A band behind each Saturday and Sunday, so the working days left can be
+  // counted at a glance, as the reader asked (#684).
+  for (let day = 1; day <= spend.length; day += 1) {
+    const weekday = spendWeekday(spend, day);
+    if (weekday !== 0 && weekday !== 6) continue;
+    putSvg(svg, "rect", { class: "spendweekend", x: chart.x(day - 1), y: CHART.top,
+                          width: chart.slot, height: tall });
+  }
   for (let usd = 0; usd <= top + step / 2; usd += step) {
     putSvg(svg, "line", { class: "spendgrid", x1: CHART.left, x2: CHART.left + wide,
                           y1: chart.y(usd), y2: chart.y(usd) });
@@ -27710,8 +27741,19 @@ function putMonthChart(pane, spend, height, most, ticks, label) {
   }
   const today = spend.days.length;
   for (let day = 1; day <= spend.length; day += 1) {
-    if (day !== 1 && day !== today && day % 7 !== 1) continue;
-    if (day !== today && Math.abs(day - today) < 3) continue;
+    const weekday = spendWeekday(spend, day);
+    putSvg(svg, "text", { class: "spendwday" + (weekday === 0 || weekday === 6 ? " weekend" : ""),
+                          x: chart.x(day - 0.5), y: height - 22, "text-anchor": "middle" })
+      .textContent = WEEKDAYS[weekday][0];
+  }
+  // The date under today, the 1st and each Monday, as a calendar starts its
+  // weeks: today first, and never two so close they run into each other.
+  const dated = [today];
+  for (let day = 1; day <= spend.length; day += 1) {
+    if (day !== 1 && spendWeekday(spend, day) !== 1) continue;
+    if (dated.every((one) => Math.abs(one - day) >= 3)) dated.push(day);
+  }
+  for (const day of dated) {
     putSvg(svg, "text", { class: "spendtick" + (day === today ? " today" : ""),
                           x: chart.x(day - 0.5), y: height - 6, "text-anchor": "middle" })
       .textContent = day === today ? "today" : String(day);
