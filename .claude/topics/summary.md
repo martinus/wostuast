@@ -53,6 +53,15 @@ can optimize my future sessions to produce less churn".
     screen empty, and the month's charts below the fold. Both grids are
     `auto-fit`, so a narrow pane gets one column with no media query.
     `test_the_statistics_tab_uses_a_wide_screen`.
+- **Every list of the tab has a bar a line, drawn one way, `putSumBar`**
+  (#685): time by tool, calls by tool, the costliest turns and the
+  slowest calls, each as long as its share of the most in its list. A
+  costly turn's bar is its weight, sent as `weight` in `costly`: its
+  dollars are `None` when the status line says no cost. The bar takes
+  the column after the number, so a call's tool goes before its target,
+  and **a turn's tokens go on the line's hover**, as the reader chose:
+  after the prompt, a long one cut them off.
+  `test_the_costliest_turns_and_the_slowest_calls_have_bars`.
 - **A day's spend is how much each session's total grew that day**
   (`Status.days`, `note_day`, `spend_by_day`, `spend_json`, `GET
   /api/spend`). Measured on 2.1.312 with `tests/claude_pane.py`: a session

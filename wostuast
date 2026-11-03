@@ -10183,8 +10183,11 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
                                       if session.turn_began else 0.0), 1),
         "turns": len([turn for turn in costs.turns if turn.seq >= 0]),
         "tokens": tokens,
+        # Its weight draws its bar (#685): the dollars are None when the
+        # status line says no cost, and the weight is there always.
         "costly": [{"seq": turn.seq, "said": turn.said, "ts": turn.ts,
-                    "tokens": turn.tokens, "replies": turn.replies, "usd": share(turn)}
+                    "tokens": turn.tokens, "replies": turn.replies, "usd": share(turn),
+                    "weight": round(turn.weight, 1)}
                    for turn in worst if turn.weight],
         "subagents": sorted(kinds.values(), key=lambda one: -one["tokens"]),
         # Subagents run before #618 counted no calls; `agents_ran` counts all.
@@ -27599,6 +27602,15 @@ function drawSummary(box) {
   putSpend(put(pane, "section", "sumpart"), state.spend, allowance);
 }
 
+// A bar as long as its share of the most in its list, in the column after
+// the number: the time by tool, the calls by tool, the costliest turns and
+// the slowest calls (#685). Never under 2 %, or a small one is not seen.
+function putSumBar(line, share) {
+  const bar = put(put(line, "span", "sumsub"), "span", "sumbar");
+  bar.style.width = Math.max(2, Math.round(100 * share)) + "%";
+  return bar;
+}
+
 // One list of the tab under its title, a card the grid lays out (#683).
 function putSumCard(parent, title) {
   const card = put(parent, "div", "sumcard");
@@ -27813,16 +27825,21 @@ function putCostly(pane, got) {
       + " its replies used: output weighs most, a cache read least. What was spent"
       + " holds the subagents' too, so a session that ran many makes each share larger.");
   const list = put(card, "div", "sumlist");
+  const most = Math.max(...turns.map((one) => one.weight || 0)) || 1;
   for (const one of turns) {
     const line = put(list, "button", "sumline turnlink");
     put(line, "span", "sumnum", one.usd === null ? "" : "\u2248" + money(one.usd));
-    const t = one.tokens || {};
-    put(line, "span", "sumsub", roughly(t.output_tokens || 0) + " out \u00b7 "
-        + roughly((t.input_tokens || 0) + (t.cache_creation_input_tokens || 0)
-                  + (t.cache_read_input_tokens || 0)) + " in");
+    putSumBar(line, (one.weight || 0) / most);
     put(line, "span", "sumsaid", one.said);
+    // The tokens on a hover, as the reader chose (#685): the bar took
+    // their column, and after the prompt a long one cut them off.
+    const t = one.tokens || {};
+    const tokens = roughly(t.output_tokens || 0) + " out \u00b7 "
+      + roughly((t.input_tokens || 0) + (t.cache_creation_input_tokens || 0)
+                + (t.cache_read_input_tokens || 0)) + " in";
+    line.title = tokens;
     if (one.seq < 0) { line.disabled = true; continue; }
-    line.title = "show this turn in the transcript";
+    line.title = tokens + ": show this turn in the transcript";
     line.addEventListener("click", () => {
       state.turns.goTo = one.seq;
       state.turns.goToTs = one.ts;
@@ -27845,17 +27862,17 @@ function putSumTime(pane, got) {
   for (const one of times) {
     const line = put(list, "div", "sumline");
     put(line, "span", "sumnum", callTime(one.seconds));
-    const bar = put(put(line, "span", "sumsub"), "span", "sumbar");
-    bar.style.width = Math.max(2, Math.round(100 * one.seconds / most)) + "%";
+    putSumBar(line, one.seconds / most);
     put(line, "span", "sumsaid", one.tool + " \u00b7 " + counted(one.calls, "call", "calls"));
   }
   if (!(got.slow || []).length) return;
   const slow = put(putSumCard(pane, "slowest calls, a second or more"), "div", "sumlist");
+  const slowest = Math.max(...got.slow.map((one) => one.seconds)) || 1;
   for (const one of got.slow) {
     const line = put(slow, "button", "sumline turnlink");
     put(line, "span", "sumnum", callTime(one.seconds));
-    put(line, "span", "sumsub", one.tool);
-    put(line, "span", "sumsaid", one.what);
+    putSumBar(line, one.seconds / slowest);
+    put(line, "span", "sumsaid", one.tool + " \u00b7 " + one.what);
     line.title = "show this call in the transcript";
     line.addEventListener("click", () => {
       // `goTo` says a block is asked for at all; the moment says which, as
@@ -27902,8 +27919,7 @@ function putSumTools(pane, got) {
   for (const [name, count] of tools) {
     const line = put(list, "div", "sumline");
     put(line, "span", "sumnum", String(count));
-    const bar = put(put(line, "span", "sumsub"), "span", "sumbar");
-    bar.style.width = Math.max(2, Math.round(100 * count / most)) + "%";
+    putSumBar(line, count / most);
     put(line, "span", "sumsaid", name);
   }
 }
