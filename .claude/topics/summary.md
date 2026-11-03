@@ -97,6 +97,15 @@ can optimize my future sessions to produce less churn".
   a hover (`ALLOWANCE_WHERE`), as the reader asked: on the tile, the
   chart's label, and the note when none is set.
   `test_the_statistics_tab_draws_the_month_against_the_allowance`.
+- **The month's charts show the weekdays, and a tile counts the workdays
+  left** (#684, `spendWeekday`, `workdaysLeft`, `.spendweekend`), as the
+  reader asked, to see how many days of work the month still has: a
+  letter under each day, a band behind each Saturday and Sunday, the
+  dates under today, the 1st and each Monday, never two within three
+  days. The workdays are Monday to Friday after today. **"At this pace"
+  stays the average of all days**: the reader chose it over a pace by
+  weekday.
+  `test_the_month_s_charts_show_the_weekdays_and_the_workdays_left`.
 - **A session's time goes by tool, and its slowest calls are kept**
   (#663, `note_tool_time`, `Session.tool_time`, `SlowCall`, `putSumTime`):
   from each call's `duration_ms`, the run alone, never the wait for a Yes

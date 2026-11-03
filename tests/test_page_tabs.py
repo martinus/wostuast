@@ -1046,6 +1046,37 @@ def test_the_costliest_turns_and_the_slowest_calls_have_bars(ws, page_at):
                                              ["10%", "Bash \u00b7 make g2"]], slow
 
 
+def test_the_month_s_charts_show_the_weekdays_and_the_workdays_left(page_at):
+    """The days said only 1, 8, 15 (#684): the reader could not see how many
+    working days the month had left. Each day has its weekday's letter, a
+    weekend a band behind it on both charts, the dates fall on Mondays, and
+    a tile counts the workdays after today. November 2026 begins on a
+    Sunday."""
+    _, path = page_at
+    month = {"today": "2026-11-03", "length": 30, "days": [1.0, 2.0, 3.0],
+             "since": "2026-11-01"}
+    with opened(path) as page:
+        page.route("**/api/spend", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(month)))
+        wait_for_map(page)
+        page.keyboard.press("4")
+        page.evaluate("loadSpend()")
+        page.wait_for_function("state.spend && state.spend.today === '2026-11-03'")
+        page.wait_for_selector(".spendweekend", state="attached")
+        # Sunday the 1st, and four weekends of two days, on each chart.
+        assert page.locator(".spendweekend").count() == 2 * 9
+        letters = page.eval_on_selector_all(
+            ".spendsvg >> nth=0 >> .spendwday", "all => all.map((one) => one.textContent)")
+        assert "".join(letters) == "SMTWTFS" * 4 + "SM", letters
+        dates = page.eval_on_selector_all(
+            ".spendsvg >> nth=0 >> .spendtick:not([text-anchor=end])",
+            "all => all.map((one) => one.textContent)")
+        # The 1st and the Monday 2nd stand too near today, the 3rd.
+        assert dates == ["today", "9", "16", "23", "30"], dates
+        tile = page.locator(".sumstat", has_text="workdays left").inner_text()
+        assert tile == "19\nworkdays left", tile
+
+
 def test_the_statistics_tab_draws_the_month_against_the_allowance(ws, page_at):
     """What all sessions spent this month (#653), under the session's own
     numbers: the day's spend is how much each session's total grew, the
