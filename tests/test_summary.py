@@ -64,6 +64,8 @@ def test_the_summary_shares_the_spend_out_by_weighted_tokens(ws, tmp_path):
     assert got["tokens"] == {"output_tokens": 40}
     session.status.cost_usd = None
     assert ws.summary_json(session, costs)["costly"][0]["usd"] is None, "no spend, no share"
+    # The tokens by what they cost, for the bar of the kinds (#688).
+    assert got["weighted"] == {"output_tokens": 200.0}
     # The weight draws a turn's bar (#685), with no spend too.
     assert [one["weight"] for one in ws.summary_json(session, costs)["costly"]] == [150.0, 50.0]
 

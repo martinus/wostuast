@@ -53,6 +53,20 @@ can optimize my future sessions to produce less churn".
     screen empty, and the month's charts below the fold. Both grids are
     `auto-fit`, so a narrow pane gets one column with no media query.
     `test_the_statistics_tab_uses_a_wide_screen`.
+- **The session's time and tokens are charts, not tiles** (#688,
+  `putSumClock`, `putSumKinds`, `TOKEN_KINDS`, `weighted`): the reader
+  found three times and four token counts as plain numbers hard to read.
+  The time is a line each with a bar on one scale, as time by tool reads:
+  since it started, busy, the model worked. **Not one bar nested in
+  another**: the reader could not read it at a first glance. The model's
+  time counts subagents, so it can pass busy. The tokens are one bar in parts, each as wide as
+  its share of what they cost, by `TOKEN_WEIGHTS` sent as `weighted`, so
+  the weights stay in one place. **Shares, never dollars**: the status
+  line's dollars hold the subagents, the transcript's tokens do not. The
+  four colours are `--kind-1` to `--kind-4`, a set the dataviz palette
+  validator passed for colour blindness on both surfaces; each block says
+  its share where it has room, and a key names the kinds.
+  `test_the_session_s_time_and_tokens_are_charts`.
 - **Every list of the tab has a bar a line, drawn one way, `putSumBar`**
   (#685): time by tool, calls by tool, the costliest turns and the
   slowest calls, each as long as its share of the most in its list. A

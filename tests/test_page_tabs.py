@@ -1077,6 +1077,55 @@ def test_the_month_s_charts_show_the_weekdays_and_the_workdays_left(page_at):
         assert tile == "19\nworkdays left", tile
 
 
+def test_the_session_s_time_and_tokens_are_charts(ws, page_at):
+    """Three times and four counts of tokens as plain numbers were hard to
+    read (#688). The time is a line each with a bar on one scale, as time
+    by tool reads: one bar nested in another did not read at a first
+    glance. The tokens are one bar
+    in parts, each as wide as its share of what they cost, the costliest
+    kind per token first, with its share inside where it fits and a key."""
+    daemon, path = page_at
+    made = conftest.record("tool", "make", tool_id="g1")
+    # Weighted: output 1000 x 5, input 1000 x 1, cache read 40000 x 0.1.
+    made["message"].update(id="m1", usage=dict(input_tokens=1000, output_tokens=1000,
+                                               cache_read_input_tokens=40_000))
+    write_records(daemon, conftest.record("you", "Build it."), made,
+                  conftest.record("result", "ok", tool_id="g1"))
+    ws.write_status("s1", ws.Status(ts=1.0, name="A session", model="Opus 5", cost_usd=1.0,
+                                    wall_ms=4_000_000, api_ms=1_000_000))
+    # One turn of 600 s: busy.
+    now = time.time()
+    ws.append_event(conftest.event("UserPromptSubmit", ts=now - 1000, pane="%7", pid=1,
+                                   prompt="Build it."))
+    ws.append_event(conftest.event("Stop", ts=now - 400, pane="%7", pid=1))
+    daemon.store.refresh()
+    with opened(path) as page:
+        wait_for_map(page)
+        page.keyboard.press("4")
+        page.wait_for_selector(".kindbar .kindpart")
+        parts = page.eval_on_selector_all(".kindbar .kindpart", """all => all.map((one) =>
+          [one.className, Number(one.style.flexGrow).toFixed(2), one.textContent])""")
+        assert parts == [["kindpart kind1", "0.50", "50%"], ["kindpart kind3", "0.10", "10%"],
+                         ["kindpart kind4", "0.40", "40%"]], parts
+        key = page.locator(".sumchart", has_text="by what they cost").locator(".sumkey")
+        assert key.inner_text().split() == ["output", "1k", "input", "1k", "cache", "read",
+                                            "40k"], key.inner_text()
+        label = page.get_attribute(".kindbar", "aria-label")
+        assert "output: 1k tokens, 50% of what the tokens cost" in label, label
+        # The time, a line each on one scale, as time by tool reads: the
+        # life's 4000 s, busy 600 s, the model's 1000 s.
+        lines = page.eval_on_selector_all(
+            ".sumchart >> nth=0 >> .sumline", """all => all.map((one) => [
+              one.querySelector('.sumnum').textContent,
+              one.querySelector('.sumbar').style.width,
+              one.querySelector('.sumsaid').textContent])""")
+        assert lines == [["1h 6min", "100%", "since it started"], ["10min", "15%", "busy"],
+                         ["16min", "25%", "the model worked"]], lines
+        # The tiles keep only what is no chart.
+        tiles = page.locator(".sumhead").first.inner_text()
+        assert "since it started" not in tiles and "$1.00" in tiles, tiles
+
+
 def test_the_statistics_tab_draws_the_month_against_the_allowance(ws, page_at):
     """What all sessions spent this month (#653), under the session's own
     numbers: the day's spend is how much each session's total grew, the
