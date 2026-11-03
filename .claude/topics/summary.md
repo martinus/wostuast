@@ -47,6 +47,12 @@ can optimize my future sessions to produce less churn".
   sessions this month** (#653, `drawSummary`, `putSpend`), as the reader
   asked; more about all sessions is to come there. Its key in the code
   stays `summary`.
+  - **The sections stand side by side where the pane is wide enough, and
+    the session's lists are cards in a grid** (#683, `.sumpart`,
+    `.sumcards`, `putSumCard`): one column of 980 px left most of a wide
+    screen empty, and the month's charts below the fold. Both grids are
+    `auto-fit`, so a narrow pane gets one column with no media query.
+    `test_the_statistics_tab_uses_a_wide_screen`.
 - **A day's spend is how much each session's total grew that day**
   (`Status.days`, `note_day`, `spend_by_day`, `spend_json`, `GET
   /api/spend`). Measured on 2.1.312 with `tests/claude_pane.py`: a session
