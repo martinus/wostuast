@@ -15863,10 +15863,20 @@ body.switching #content::after {
 .content.agentview .turnacts { display: none; }
 .content.agentview .who .self { cursor: default; }
 /* The Statistics tab (issue 622): the numbers, then the lists; this
-   session, then all of them (issue 653). */
-.summary { max-width: 980px; }
-.sumsection { margin: 30px 0 12px; font-size: 15px; font-weight: 600; color: var(--ink-bright); }
-.summary > .sumsection:first-child { margin-top: 0; }
+   session, then all of them (issue 653). Side by side where the pane is
+   wide enough, and the lists in as many columns as fit (issue 683): one
+   column of 980 px left most of a wide screen empty, and the month's
+   charts below the fold. */
+.summary {
+  display: grid; gap: 30px 56px; align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 620px), 1fr));
+}
+.sumpart, .sumcard { min-width: 0; }
+.sumcards {
+  display: grid; gap: 0 32px; align-items: start;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr));
+}
+.sumsection { margin: 0 0 12px; font-size: 15px; font-weight: 600; color: var(--ink-bright); }
 .sumstat.over .sumvalue { color: var(--needs); }
 /* The month's two charts (issue 653): one dollar scale each, thin marks,
    the lines and words in the page's quiet greys. */
@@ -27572,18 +27582,28 @@ function drawSummary(box) {
   box.replaceChildren();
   const pane = put(box, "div", "summary");
   // Two sections, as the reader asked (#653): this session, then all of
-  // them. More about all of them is to come there.
-  put(pane, "h2", "sumsection", "This session");
+  // them. More about all of them is to come there. Each is a column of
+  // the tab's grid, and the session's lists a grid of cards (#683).
+  const mine = put(pane, "section", "sumpart");
+  put(mine, "h2", "sumsection", "This session");
   if (!got) {
-    put(pane, "p", "sumnote", "Reading the transcript\u2026");
+    put(mine, "p", "sumnote", "Reading the transcript\u2026");
   } else {
-    putSumHead(pane, got);
-    putCostly(pane, got);
-    putSumTime(pane, got);
-    putSumAgents(pane, got);
-    putSumTools(pane, got);
+    putSumHead(mine, got);
+    const cards = put(mine, "div", "sumcards");
+    putCostly(cards, got);
+    putSumTime(cards, got);
+    putSumAgents(cards, got);
+    putSumTools(cards, got);
   }
-  putSpend(pane, state.spend, allowance);
+  putSpend(put(pane, "section", "sumpart"), state.spend, allowance);
+}
+
+// One list of the tab under its title, a card the grid lays out (#683).
+function putSumCard(parent, title) {
+  const card = put(parent, "div", "sumcard");
+  put(card, "h3", "sumtitle", title);
+  return card;
 }
 
 // What all sessions spent each day of the month, from every status file.
@@ -27788,11 +27808,11 @@ function putSumHead(pane, got) {
 function putCostly(pane, got) {
   const turns = got.costly;
   if (!turns.length) return;
-  put(pane, "h3", "sumtitle", "costliest turns");
-  put(pane, "p", "sumnote", "\u2248 is each turn's share of what was spent, by the tokens"
+  const card = putSumCard(pane, "costliest turns");
+  put(card, "p", "sumnote", "\u2248 is each turn's share of what was spent, by the tokens"
       + " its replies used: output weighs most, a cache read least. What was spent"
       + " holds the subagents' too, so a session that ran many makes each share larger.");
-  const list = put(pane, "div", "sumlist");
+  const list = put(card, "div", "sumlist");
   for (const one of turns) {
     const line = put(list, "button", "sumline turnlink");
     put(line, "span", "sumnum", one.usd === null ? "" : "\u2248" + money(one.usd));
@@ -27817,10 +27837,10 @@ function putCostly(pane, got) {
 function putSumTime(pane, got) {
   const times = got.tool_time || [];
   if (!times.length) return;
-  put(pane, "h3", "sumtitle", "time by tool");
-  put(pane, "p", "sumnote", "How long its own calls ran, not the wait for your answer."
+  const card = putSumCard(pane, "time by tool");
+  put(card, "p", "sumnote", "How long its own calls ran, not the wait for your answer."
       + " A subagent's calls are its own.");
-  const list = put(pane, "div", "sumlist");
+  const list = put(card, "div", "sumlist");
   const most = times[0].seconds || 1;
   for (const one of times) {
     const line = put(list, "div", "sumline");
@@ -27830,8 +27850,7 @@ function putSumTime(pane, got) {
     put(line, "span", "sumsaid", one.tool + " \u00b7 " + counted(one.calls, "call", "calls"));
   }
   if (!(got.slow || []).length) return;
-  put(pane, "h3", "sumtitle", "slowest calls, a second or more");
-  const slow = put(pane, "div", "sumlist");
+  const slow = put(putSumCard(pane, "slowest calls, a second or more"), "div", "sumlist");
   for (const one of got.slow) {
     const line = put(slow, "button", "sumline turnlink");
     put(line, "span", "sumnum", callTime(one.seconds));
@@ -27862,8 +27881,7 @@ function callTime(seconds) {
 function putSumAgents(pane, got) {
   const kinds = got.subagents;
   if (!kinds.length) return;
-  put(pane, "h3", "sumtitle", "subagents");
-  const list = put(pane, "div", "sumlist");
+  const list = put(putSumCard(pane, "subagents"), "div", "sumlist");
   for (const one of kinds) {
     const line = put(list, "div", "sumline");
     put(line, "span", "sumnum", "\u00d7" + one.ran);
@@ -27879,8 +27897,7 @@ function putSumAgents(pane, got) {
 function putSumTools(pane, got) {
   const tools = got.tools;
   if (!tools.length) return;
-  put(pane, "h3", "sumtitle", "calls by tool");
-  const list = put(pane, "div", "sumlist");
+  const list = put(putSumCard(pane, "calls by tool"), "div", "sumlist");
   const most = tools[0][1];
   for (const [name, count] of tools) {
     const line = put(list, "div", "sumline");

@@ -876,7 +876,7 @@ def test_the_summary_tab_says_where_the_tokens_went(ws, page_at):
     with opened(path) as page:
         wait_for_map(page)
         page.keyboard.press("4")
-        page.wait_for_selector(".summary > .sumhead")
+        page.wait_for_selector(".summary .sumhead")
         assert page.evaluate("state.tab") == "summary"
         head = page.locator(".sumhead").first.inner_text()
         assert "$1.83" in head and "spent" in head and "+12 \u22123" in head, head
@@ -912,12 +912,12 @@ def test_the_statistics_tab_says_it_is_reading_until_the_summary_comes(page_at):
         wait_for_map(page)
         held = hold(page, "**/api/session/s1/summary*")
         page.keyboard.press("4")
-        page.wait_for_selector(".summary > .sumnote")
-        assert page.locator(".summary > .sumnote").first.inner_text() \
+        page.wait_for_selector(".summary .sumnote")
+        assert page.locator(".summary .sumnote").first.inner_text() \
             == "Reading the transcript\u2026"
         wait_until(page, lambda: held)
         held[0].continue_()
-        page.wait_for_selector(".summary > .sumhead")
+        page.wait_for_selector(".summary .sumhead")
 
 
 def test_the_statistics_tab_says_where_the_time_went_by_tool(ws, page_at):
@@ -960,6 +960,46 @@ def test_the_statistics_tab_says_where_the_time_went_by_tool(ws, page_at):
           .some((one) => one.textContent.includes('grep -r parse'))""")
 
 
+def test_the_statistics_tab_uses_a_wide_screen(ws, page_at):
+    """One column of 980 px left most of a wide screen empty, and the month
+    below the fold (#683). Where the pane is wide enough, the two sections
+    stand side by side and the session's lists share rows, so nothing
+    scrolls; on a narrow one, the sections stand one under the other."""
+    daemon, path = page_at
+    used = dict(input_tokens=40, output_tokens=9000, cache_read_input_tokens=50000)
+    made = conftest.record("tool", "make test", tool_id="g1")
+    made["message"].update(id="m1", usage=used)
+    write_records(daemon, conftest.record("you", "Run the tests."), made,
+                  conftest.record("result", "ok", tool_id="g1"))
+    ws.append_event(conftest.event("PostToolUse", ts=time.time(), pane="%7", pid=1,
+                                   tool_name="Bash", tool_use_id="g1",
+                                   tool_input={"command": "make test"}, duration_ms=30_000))
+    daemon.store.refresh()
+    today = time.strftime("%Y-%m-%d")
+    ws.write_status("s2", ws.Status(cost_usd=4.0, days={today: 4.0}))
+    with opened(path) as page:
+        page.set_viewport_size({"width": 2560, "height": 1440})
+        wait_for_map(page)
+        page.keyboard.press("4")
+        page.wait_for_selector(".spendsvg")
+        page.wait_for_selector(".sumcard >> text=make test")
+        boxes = """() => [...document.querySelectorAll(SELECTOR)].map((one) => {
+          const at = one.getBoundingClientRect();
+          return [Math.round(at.left), Math.round(at.top), Math.round(at.right),
+                  Math.round(at.bottom)]; })"""
+        parts = page.evaluate(boxes.replace("SELECTOR", "'.sumpart'"))
+        assert len(parts) == 2 and parts[0][1] == parts[1][1] \
+            and parts[1][0] > parts[0][2], parts
+        cards = page.evaluate(boxes.replace("SELECTOR", "'.sumcard'"))
+        assert len(cards) >= 2 and cards[0][1] == cards[1][1], cards
+        assert page.evaluate("""() => { const box = document.getElementById('content');
+          return box.scrollHeight <= box.clientHeight; }""")
+        page.set_viewport_size({"width": 1280, "height": 900})
+        page.wait_for_function("""() => { const [one, two] =
+          document.querySelectorAll('.sumpart');
+          return two.getBoundingClientRect().top >= one.getBoundingClientRect().bottom; }""")
+
+
 def test_the_statistics_tab_draws_the_month_against_the_allowance(ws, page_at):
     """What all sessions spent this month (#653), under the session's own
     numbers: the day's spend is how much each session's total grew, the
@@ -970,7 +1010,7 @@ def test_the_statistics_tab_draws_the_month_against_the_allowance(ws, page_at):
     with opened(path) as page:
         wait_for_map(page)
         page.keyboard.press("4")
-        page.wait_for_selector(".summary > .sumnote >> nth=-1")
+        page.wait_for_selector(".summary .sumnote >> nth=-1")
         page.wait_for_function("!!state.spend")
         assert "Nothing kept yet" in page.locator(".summary").inner_text()
         assert [one.strip() for one in page.locator(".sumsection").all_inner_texts()] == [
