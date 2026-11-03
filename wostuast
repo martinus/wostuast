@@ -15883,6 +15883,7 @@ body.switching #content::after {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 620px), 1fr));
 }
 .sumpart, .sumcard { min-width: 0; }
+.sumcard.wide { grid-column: 1 / -1; }
 .sumcards {
   display: grid; gap: 0 32px; align-items: start;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr));
@@ -28044,6 +28045,38 @@ function putSumAgents(pane, got) {
     if (one.seconds) parts.push(lasted(one.seconds));
     put(line, "span", "sumsub", parts.join(" \u00b7 "));
     put(line, "span", "sumsaid", one.kind);
+  }
+  putSumRuns(pane, current());
+}
+
+// Each subagent the daemon keeps, the newest first (#687): a line a kind
+// said only how many ran, not what each did. How long it ran, a bar on one
+// scale, then its kind, its task, its calls and tokens; its last words on
+// the hover, and a click opens its own transcript, as its line under the
+// row does (`openAgent`). The daemon keeps the last `SUBAGENTS_HELD`.
+function putSumRuns(pane, s) {
+  const runs = ((s && s.subagents) || []).slice().sort((a, b) => b.started - a.started);
+  if (!runs.length) return;
+  const now = Date.now() / 1000 + state.skew;
+  const took = (one) => Math.max(0, (one.ended || now) - one.started);
+  const most = Math.max(...runs.map(took)) || 1;
+  // The whole row of the grid: a task is a sentence, and half a card cut
+  // it to its first words.
+  const card = putSumCard(pane, "each subagent");
+  card.classList.add("wide");
+  if ((s.agents_ran || 0) > runs.length) {
+    put(card, "p", "sumnote", "The last " + runs.length + " of the " + s.agents_ran + " that ran.");
+  }
+  const list = put(card, "div", "sumlist");
+  for (const one of runs) {
+    const line = put(list, "button", "sumline turnlink");
+    put(line, "span", "sumnum", one.ended ? lasted(took(one)) : "running");
+    putSumBar(line, took(one) / most);
+    const parts = [one.kind || "subagent", one.what || "", counted(one.calls, "call", "calls")];
+    if (one.tokens) parts.push(roughly(one.tokens) + " tokens");
+    put(line, "span", "sumsaid", parts.filter(Boolean).join(" \u00b7 "));
+    line.title = (one.said ? one.said + "\n\n" : "") + "open its transcript";
+    line.addEventListener("click", () => openAgent(s.id, one));
   }
 }
 

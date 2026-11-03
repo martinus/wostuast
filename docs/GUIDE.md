@@ -440,7 +440,10 @@ the tokens its replies used, output weighing most and a cache read least.
 Click a turn to read it in the transcript. Then the time by tool: how long
 each tool's calls ran, not the time a dialog waited for your answer. Then
 its slowest calls, of a second or more; click one to read it in the
-transcript. Then its subagents by kind, and its calls by tool.
+transcript. Then its subagents by kind, and then each subagent, the newest
+first: how long it ran, its kind, its task, its calls and tokens. Point at one
+to read its last words, and click it to read its own transcript. Then its calls
+by tool.
 
 Then all sessions, this calendar month: what they spent, what they spent
 today, and what the month comes to at this pace. Two charts show the
