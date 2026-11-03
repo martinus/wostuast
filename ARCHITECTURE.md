@@ -857,6 +857,8 @@ ones. Then `usePlace` puts back only what *you* chose for that session: where
 you scrolled, which file was open, which folders were shut. The table
 `PLACE_FIELDS` lists those fields, once. Everything else — the file text, the
 diff, the transcript — is fetched again.
+The text in the send box is kept apart, by session, in `state.drafts`
+(`keepDraft`, `takeDraft`), so each session has its own half-written prompt.
 
 ### One way to ask, one way to draw
 

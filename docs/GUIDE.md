@@ -306,6 +306,10 @@ page says so and puts your text back in the box. Press <kbd>↑</kbd> in the
 empty send box to bring back what you sent before, and <kbd>↓</kbd> to go
 forward again.
 
+Each session has its own text in the send box. When you choose another
+session, the page keeps what you typed, and shows it again when you come
+back. A reload of the page forgets it.
+
 When the send box is three lines tall or more, it shows how much it holds
 over the send button: the lines and the size, such as "2.4k lines" and
 "112 KB". A message can be up to 1 MiB.

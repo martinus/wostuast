@@ -17581,6 +17581,9 @@ const state = {
   // Not `places`: `state.files.places` is the list of things to go to, and
   // one word for two ideas is how one of them gets shadowed.
   visits: new Map(),
+  // What each session's send box held when the reader left it, by id --
+  // see `keepDraft`.
+  drafts: new Map(),
   // The transcripts of the last sessions left, by id, the oldest first --
   // see `keepTurns`.
   heldTurns: new Map(),
@@ -20628,7 +20631,7 @@ function drawHeader() {
   // Only when it appears. `drawHeader` runs on every push from the daemon,
   // which is about once a second while an agent works, and `fitSay` reads a
   // layout it has just made dirty. What is in the box cannot change without
-  // the reader typing, and that has its own listener.
+  // the reader typing or choosing a session, and each has its own call.
   if (was && !$("sendbar").hidden) fitSay();
 }
 
@@ -27948,7 +27951,9 @@ function choose(id) {
   // Before `chosen` moves on: kept under the new id, the last session's
   // transcript was drawn at once under the new session's name.
   keepTurns(state.chosen);
+  keepDraft(state.chosen);
   state.chosen = id;
+  takeDraft(id);
   fitPicks();
   state.keptUnread = null;        // a mark made while looking holds till now
   // The address names the session on screen, so a reload comes back to it.
@@ -28943,7 +28948,13 @@ async function sendTyped() {
   said(answer);
   // `seen: false` is a send the daemon watched for and Claude Code never
   // took (#489): a dialog of its own was up, and the text went into it.
+  // The text goes back to its own session's box: the reader may have
+  // chosen another while it was on its way (#686).
   if (!answer || !answer.done || answer.seen === false) {
+    if (id !== state.chosen) {
+      state.drafts.set(id, text + (state.drafts.get(id) || ""));
+      return;
+    }
     box.value = text + box.value;
     fitSay();
   } else {
@@ -28991,6 +29002,30 @@ function recallSent(press) {
   box.value = next >= 0 ? held[held.length - 1 - next] : "";
   fitSay();
   return true;
+}
+
+// Each session has a send box of its own (#686): a prompt half written for
+// one session stayed in the box when the reader chose another, and Enter
+// sent it to the wrong agent. The text is kept in this page only, as the
+// box's own text is, and a session that has gone from the list is
+// forgotten, as `savePlace` forgets its place.
+function keepDraft(id) {
+  if (!id) return;
+  const text = $("say").value;
+  if (text) state.drafts.set(id, text);
+  else state.drafts.delete(id);
+  const live = new Set(state.sessions.map((one) => one.id));
+  for (const kept of [...state.drafts.keys()]) {
+    if (!live.has(kept)) state.drafts.delete(kept);
+  }
+}
+
+// The chosen session's own text into the box, or an empty box. Up then
+// starts again from the newest send.
+function takeDraft(id) {
+  $("say").value = state.drafts.get(id) || "";
+  sentAt = -1;
+  fitSay();
 }
 
 $("sendbar").addEventListener("submit", (press) => {

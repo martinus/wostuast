@@ -51,6 +51,15 @@ rename, and the keys.
     newer, then empty, only while the box holds no words of the reader's.
     A send that came back is not kept.
     `test_a_send_claude_code_did_not_take_comes_back_and_up_recalls_one`.
+- **Each session has its own send box text** (#686, `keepDraft`,
+  `takeDraft`, `state.drafts`): with one box for all, a prompt half written
+  for one session stayed when the reader chose another, and Enter sent it
+  to the wrong agent. `choose` keeps the text by id and puts the new
+  session's text in, in this page only; a session gone from the list is
+  forgotten. **A send that comes back goes to its own session's text**,
+  not the box on screen: the reader may have chosen another meanwhile.
+  `test_each_session_keeps_what_was_typed_in_its_send_box`,
+  `test_a_send_that_comes_back_goes_to_the_box_of_its_own_session`.
 - **A tall send box says how much it holds** (`sizeSay`, `SAY_ROOM`,
   issue 332): "2.4k lines", "112 KB" (`roughly`, `sizeOf`), in sans, as
   the reader chose. It sits with the button in `.sendside`: over the bar

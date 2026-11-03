@@ -1038,6 +1038,59 @@ def test_a_refused_send_comes_back_in_front_of_what_was_typed_since(
                                " === 'please work and more'")
 
 
+def with_second_session(ws, daemon):
+    """A second session in a pane of its own, beside `in_pane`'s."""
+    ws.append_event(conftest.event("SessionStart", sid="s2", pane="%9", pid=2,
+                                   ts=time.time()))
+    daemon.store.refresh()
+
+
+def test_each_session_keeps_what_was_typed_in_its_send_box(ws, in_pane):
+    """A prompt half written for one session stayed in the box when the
+    reader chose another (#686), and Enter would have sent it there. Each
+    session keeps its own text, and one never typed into has an empty box."""
+    daemon, base, seen = in_pane
+    with_second_session(ws, daemon)
+    with opened((None, base)) as page:
+        page.wait_for_function("state.sessions.length === 2")
+        page.evaluate("choose('s1')")
+        page.click("#say")
+        page.keyboard.type("for the first")
+        page.click(".row[data-id='s2']")
+        assert page.evaluate("state.chosen") == "s2"
+        assert page.input_value("#say") == ""
+        page.click("#say")
+        page.keyboard.type("for the second")
+        page.click(".row[data-id='s1']")
+        assert page.input_value("#say") == "for the first"
+        page.click(".row[data-id='s2']")
+        assert page.input_value("#say") == "for the second"
+
+
+def test_a_send_that_comes_back_goes_to_the_box_of_its_own_session(
+        ws, in_pane, monkeypatch):
+    """A refused send puts its text back. When the reader chose another
+    session while it was on its way, it goes back into its own session's
+    box, not into the box on screen."""
+    daemon, base, seen = in_pane
+    with_second_session(ws, daemon)
+    monkeypatch.setattr(ws, "run", lambda args, **rest: None)
+    with opened((None, base)) as page:
+        page.wait_for_function("state.sessions.length === 2")
+        page.evaluate("choose('s1')")
+        stub_send(page, delay=800)
+        page.click("#say")
+        page.keyboard.type("please work")
+        page.keyboard.press("Enter")
+        page.click(".row[data-id='s2']")
+        page.click("#say")
+        page.keyboard.type("other")
+        page.wait_for_function("sending.size === 0")
+        assert page.input_value("#say") == "other"
+        page.click(".row[data-id='s1']")
+        assert page.input_value("#say") == "please work"
+
+
 def test_enter_on_a_button_reached_by_keyboard_presses_it(in_pane):
     """Enter jumped to the pane from wherever the focus was, so a keyboard
     could press nothing on the page. After a click it still jumps: the click
