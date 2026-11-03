@@ -10183,6 +10183,10 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
                                       if session.turn_began else 0.0), 1),
         "turns": len([turn for turn in costs.turns if turn.seq >= 0]),
         "tokens": tokens,
+        # The same tokens by `TOKEN_WEIGHTS`, for the bar of what each kind
+        # cost (#688): the weights stay here, in one place.
+        "weighted": {key: round(count * TOKEN_WEIGHTS.get(key, 0.0), 1)
+                     for key, count in tokens.items()},
         # Its weight draws its bar (#685): the dollars are None when the
         # status line says no cost, and the weight is there always.
         "costly": [{"seq": turn.seq, "said": turn.said, "ts": turn.ts,
@@ -14937,10 +14941,14 @@ if (!SETTINGS || typeof SETTINGS !== "object") SETTINGS = {};
   --ring-far: color-mix(in srgb, var(--needs) 10%, transparent);
   --mark: var(--needs-warm);
   --veil: rgba(0,0,0,.5);
+  /* The four kinds of token on the Statistics tab (issue 688): a
+     categorical set, validated for colour blindness on this surface. */
+  --kind-1: #3987e5; --kind-2: #d95926; --kind-3: #199e70; --kind-4: #c98500;
   /* The band over a hunk: git's own blue-grey, the way a pull request does it. */
   --hunk-bg: color-mix(in srgb, var(--done) 12%, transparent);
 }
 :root[data-theme="light"] {
+  --kind-1: #2a78d6; --kind-2: #eb6834; --kind-3: #1baf7a; --kind-4: #eda100;
   --bg: var(--light-bg); --panel: #efeee9; --raised: #e7e6e0; --chosen: #dedcd4;
   --edge: #d8d6cd; --edge-bright: #c3c0b5;
   --ink: var(--light-ink); --ink-bright: #14151a; --ink-soft: #4c4f58;
@@ -15913,6 +15921,31 @@ body:has(.content[data-tab="summary"]) .findhome { display: none; }
 .sumvalue { font-size: 20px; font-weight: 600; color: var(--ink); }
 .sumwhat { font-size: 12px; color: var(--ink-faint); }
 .sumtokens { margin: 12px 0 0; font-size: 13px; color: var(--ink-faint); }
+/* The session's time and its tokens as charts (issue 688): the times as
+   a list with bars; the four kinds of token as one bar in parts, 2 px
+   apart, its share inside each block that has room. */
+.sumcharts {
+  display: grid; gap: 0 32px; align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr));
+}
+.sumchart { min-width: 0; }
+.kindbar { display: flex; gap: 2px; height: 28px; }
+.kindpart {
+  display: flex; align-items: center; min-width: 2px; padding-left: 6px;
+  border-radius: 4px; overflow: hidden; color: var(--dark-bg); font-size: 12px;
+  font-weight: 600; white-space: nowrap;
+}
+.kind1 { background: var(--kind-1); } .kind2 { background: var(--kind-2); }
+.kind3 { background: var(--kind-3); } .kind4 { background: var(--kind-4); }
+.sumkey {
+  display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px;
+  font-size: 12px; color: var(--ink-faint);
+}
+.sumkeyvalue { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.swatch {
+  display: inline-block; width: 10px; height: 10px; margin-right: 6px;
+  border-radius: 3px; vertical-align: -1px;
+}
 .sumnote { margin: 0 0 6px; font-size: 12px; color: var(--ink-faint); }
 .sumtitle {
   margin: 22px 0 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
@@ -27838,24 +27871,86 @@ function putSpendHit(chart, day, words, spend) {
     + String(day).padStart(2, "0")) + ": " + words;
 }
 
-// The few numbers that say the most, each over what it is.
+// The few numbers that say the most, each over what it is, then where the
+// time and the tokens went, as charts (#688): three times and four counts
+// of tokens side by side were hard to read.
 function putSumHead(pane, got) {
   const head = put(pane, "div", "sumhead");
   const stat = (value, what, title) => putStat(head, value, what, title);
   stat(got.cost_usd === null || got.cost_usd === undefined ? "\u2014" : money(got.cost_usd),
        "spent", "Claude Code's own estimate, at list price. It starts again at /clear.");
-  if (got.wall_ms) stat(lasted(got.wall_ms / 1000), "since it started");
-  stat(lasted(got.busy), "busy", "prompt to end, every turn");
-  if (got.api_ms) stat(lasted(got.api_ms / 1000), "the model worked");
   stat(String(got.turns), got.turns === 1 ? "turn" : "turns");
   if (got.lines_added || got.lines_removed) {
     stat("+" + (got.lines_added || 0) + " \u2212" + (got.lines_removed || 0), "lines");
   }
+  const charts = put(pane, "div", "sumcharts");
+  putSumClock(charts, got);
+  putSumKinds(charts, got);
+}
+
+// Where the session's time went (#688): how long it has run, how long it
+// was busy, and how long the model worked, a line each with a bar on one
+// scale, as time by tool reads. One bar nested in another did not read at
+// a first glance. The model's time counts its subagents, so it can pass
+// busy.
+function putSumClock(parent, got) {
+  const wall = (got.wall_ms || 0) / 1000;
+  const busy = got.busy || 0;
+  const model = (got.api_ms || 0) / 1000;
+  const whole = Math.max(wall, busy, model);
+  if (!whole) return;
+  const box = put(parent, "div", "sumchart");
+  put(box, "h3", "sumtitle", "time");
+  const list = put(box, "div", "sumlist");
+  for (const [seconds, what, title] of [
+      [wall, "since it started", "the status line's time: the session's whole life"],
+      [busy, "busy", "prompt to end, every turn"],
+      [model, "the model worked", "the time Claude Code waited for the model, subagents too"]]) {
+    if (!seconds) continue;
+    const line = put(list, "div", "sumline");
+    line.title = title;
+    put(line, "span", "sumnum", lasted(seconds));
+    putSumBar(line, seconds / whole);
+    put(line, "span", "sumsaid", what);
+  }
+}
+
+// The kinds of token, in the order their blocks stand: what costs most per
+// token first.
+const TOKEN_KINDS = [["output_tokens", "output"], ["cache_creation_input_tokens", "cache written"],
+                     ["input_tokens", "input"], ["cache_read_input_tokens", "cache read"]];
+
+// What each kind of token cost, as one bar split into its parts (#688):
+// the tokens weighted as Anthropic prices them, so a million cache reads
+// show as the tenth they cost. Each block says its share where it fits;
+// the key names the kinds and their counts.
+function putSumKinds(parent, got) {
+  const weighted = got.weighted || {};
+  const total = TOKEN_KINDS.reduce((sum, [field]) => sum + (weighted[field] || 0), 0);
+  if (!total) return;
   const t = got.tokens || {};
-  put(pane, "p", "sumtokens", ["input " + roughly(t.input_tokens || 0),
-    "cache written " + roughly(t.cache_creation_input_tokens || 0),
-    "cache read " + roughly(t.cache_read_input_tokens || 0),
-    "output " + roughly(t.output_tokens || 0)].join(" \u00b7 ") + " tokens");
+  const box = put(parent, "div", "sumchart");
+  put(box, "h3", "sumtitle", "tokens, by what they cost");
+  const bar = put(box, "div", "kindbar");
+  bar.setAttribute("role", "img");
+  const key = put(box, "div", "sumkey");
+  const said = [];
+  TOKEN_KINDS.forEach(([field, name], at) => {
+    const share = (weighted[field] || 0) / total;
+    if (!share) return;
+    const words = name + ": " + roughly(t[field] || 0) + " tokens, "
+      + Math.round(100 * share) + "% of what the tokens cost";
+    const part = put(bar, "span", "kindpart kind" + (at + 1));
+    part.style.flexGrow = String(share);
+    part.title = words;
+    if (share >= 0.08) put(part, "span", "kindshare", Math.round(100 * share) + "%");
+    said.push(words);
+    const item = put(key, "span", "sumkeyitem");
+    put(item, "span", "swatch kind" + (at + 1));
+    put(item, "span", null, name + " ");
+    put(item, "span", "sumkeyvalue", roughly(t[field] || 0));
+  });
+  bar.setAttribute("aria-label", "what the tokens cost, by kind: " + said.join("; "));
 }
 
 // The turns that used the most, each a link to it in the transcript.

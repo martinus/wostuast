@@ -40,6 +40,7 @@ In the page script's "page helpers" section unless named:
 | a diff's files in the order its tree reads | `treeOrder(found, pathOf)` |
 | which words of a changed line changed | `wordDiff(was, now)`, then `markWords(cell, runs)` |
 | cards in as many columns as fit | `putBoard(parent, cls)`, `putCard`, then `layoutCards(board)` |
+| a Statistics card, a bar a line, a stat tile | `putSumCard(parent, title)`, `putSumBar(line, share)`, `putStat(head, value, what, title)` — not `putCard`, the views' card |
 
 Three page functions match, and are easy to confuse: `matches` (a
 transcript block), `matching` (the file tree), `hits` (any list by path). A

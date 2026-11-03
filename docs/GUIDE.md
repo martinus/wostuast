@@ -425,11 +425,14 @@ words marked.
 
 #### Statistics
 
-First, this session. What the session spent, as Claude Code estimates it, how long it has run,
-how long it was busy (from each prompt to the end of its turn), how long
-the model worked, its turns, and the lines its edits added and removed.
-Under them, the tokens it used: input, cache written, cache read and
-output.
+First, this session. What the session spent, as Claude Code estimates it, its
+turns, and the lines its edits added and removed. Under them, two charts. The
+time chart shows how long the session has run, how long it was busy (from each
+prompt to the end of its turn) and how long the model worked, a line each with
+a bar on one scale. The tokens chart is one bar in four parts: output, cache written, input
+and cache read. Each part is as wide as its share of what the tokens cost, so
+a million cache reads show as the tenth of the price they cost. The key under
+it says how many tokens of each kind the session used.
 
 Then its costliest turns. A turn's share of what was spent is marked
 "≈": the status line says only the whole, so each turn gets its share by
