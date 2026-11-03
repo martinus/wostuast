@@ -883,7 +883,7 @@ def test_the_summary_tab_says_where_the_tokens_went(ws, page_at):
         lines = page.locator(".sumline.turnlink").all_inner_texts()
         assert "Rename the parser." in lines[0] and "\u2248$" in lines[0], lines
         assert "Bash" in page.locator(".summary").inner_text()
-        agents = page.locator(".sumline", has_text="Explore").inner_text()
+        agents = page.locator(".sumcard:not(.wide) .sumline", has_text="Explore").inner_text()
         assert "\u00d71" in agents and "1 call" in agents, agents
         # No place to pick: that is the Files and Review tabs'.
         assert page.locator("#placepick").is_hidden()
@@ -1124,6 +1124,47 @@ def test_the_session_s_time_and_tokens_are_charts(ws, page_at):
         # The tiles keep only what is no chart.
         tiles = page.locator(".sumhead").first.inner_text()
         assert "since it started" not in tiles and "$1.00" in tiles, tiles
+
+
+def test_each_subagent_is_a_line_that_opens_its_transcript(ws, page_at):
+    """A line a kind said only "x3, 73 calls, 22min" (#687). Each subagent
+    the daemon keeps is a line, the newest first: how long it ran, a bar,
+    its kind, its task, its calls; its last words on the hover, and a click
+    opens its own transcript."""
+    daemon, path = page_at
+    now = time.time()
+
+    def ran(agent, kind, what, began, calls, ended=None, said=""):
+        ws.append_event(conftest.event("PreToolUse", ts=began - 1, pane="%7", pid=1,
+                                       tool_name="Agent",
+                                       tool_input={"description": what, "subagent_type": kind}))
+        on = dict(pane="%7", pid=1, agent_id=agent, agent_type=kind)
+        ws.append_event(conftest.event("SubagentStart", ts=began, **on))
+        for step in range(calls):
+            ws.append_event(conftest.event("PreToolUse", ts=began + 1 + step, tool_name="Grep",
+                                           tool_input={"pattern": "parse"}, **on))
+        if ended:
+            ws.append_event(conftest.event("SubagentStop", ts=ended, last_assistant_message=said,
+                                           **on))
+
+    ran("ag1", "Explore", "Find the parser", now - 100, 2, ended=now - 40, said="Two files.")
+    ran("ag2", "general-purpose", "Review the diff", now - 30, 1)
+    daemon.store.refresh()
+    with opened(path) as page:
+        wait_for_map(page)
+        page.keyboard.press("4")
+        page.wait_for_selector(".sumcard.wide .sumline")
+        lines = page.eval_on_selector_all(".sumcard.wide .sumline", """all => all.map((one) => [
+          one.querySelector('.sumnum').textContent, one.querySelector('.sumsaid').textContent,
+          one.querySelector('.sumbar').style.width, one.title])""")
+        assert [one[:2] for one in lines] == [
+            ["running", "general-purpose \u00b7 Review the diff \u00b7 1 call"],
+            ["1min", "Explore \u00b7 Find the parser \u00b7 2 calls"]], lines
+        assert lines[1][2] == "100%" and 0 < int(lines[0][2][:-1]) < 100, lines
+        assert lines[1][3].startswith("Two files.") and "open its transcript" in lines[1][3]
+        page.locator(".sumcard.wide .sumline", has_text="Find the parser").click()
+        page.wait_for_function("state.agent && state.agent.id === 'ag1'")
+        assert page.evaluate("state.tab") == "transcript"
 
 
 def test_the_statistics_tab_draws_the_month_against_the_allowance(ws, page_at):

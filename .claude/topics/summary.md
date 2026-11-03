@@ -67,6 +67,17 @@ can optimize my future sessions to produce less churn".
   validator passed for colour blindness on both surfaces; each block says
   its share where it has room, and a key names the kinds.
   `test_the_session_s_time_and_tokens_are_charts`.
+- **Each subagent the daemon keeps is a line of its own, under the line
+  a kind** (#687, `putSumRuns`, `.sumcard.wide`): a line a kind said only
+  how many ran. The newest first: how long it ran ("running" while it
+  runs), a bar on one scale, its kind, its task, its calls and tokens;
+  its last words on the hover, and a click opens its own transcript
+  (`openAgent`), as its line under the row does. They come from the row's
+  `subagents`, the last `SUBAGENTS_HELD`, and a note says how many of
+  `agents_ran` that is. The card spans the grid's row: in half a card a
+  task was cut to its first words. **The tab's poll redraws it**: a row's
+  push draws no tab, so a redraw key for the row's subagents did nothing.
+  `test_each_subagent_is_a_line_that_opens_its_transcript`.
 - **Every list of the tab has a bar a line, drawn one way, `putSumBar`**
   (#685): time by tool, calls by tool, the costliest turns and the
   slowest calls, each as long as its share of the most in its list. A
