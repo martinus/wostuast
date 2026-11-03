@@ -1499,6 +1499,8 @@ class Session:
     #: How long the prompt cache of its last request lasts: "5m", "1h", or
     #: "" when unknown (`cache_ttl`). Read behind the fold with `pr`.
     cache_ttl: str = ""
+    #: When that cache expires, or 0 when unknown (`cache_until`, #689).
+    cache_until: float = 0.0
     #: The last prompt as an alert shows it, and the prompt it was made
     #: from: see `shown_prompt`.
     prompt_shown: tuple[str, str] = ("", "")
@@ -5593,6 +5595,7 @@ def read_prs(looked_at: dict[str, tuple[float, tuple[int, int]]],
         # The lifetime is said with idle compaction off too: a reply after
         # it writes the whole context to the cache again, compaction or not.
         session.cache_ttl = last.ttl if last else ""
+        session.cache_until = cache_until(last)
         session.idle_compact_at = idle_compact_at(last) if compacts else 0.0
 
 
@@ -5647,6 +5650,21 @@ def cache_ttl(usage: dict[str, Any]) -> str:
     if to_int(written.get("ephemeral_5m_input_tokens")) > 0:
         return "5m"
     return "1h" if to_int(written.get("ephemeral_1h_input_tokens")) > 0 else ""
+
+
+#: How long each prompt cache lasts after the last request that used it.
+CACHE_SECONDS = {"5m": 300.0, "1h": CACHE_HOUR}
+
+
+def cache_until(last: LastRequest | None) -> float:
+    """When the prompt cache of the last request expires, or 0 when it
+    wrote none (#689). A request that reads the cache starts its life
+    again, so it is the last request's time plus the cache's life. The
+    time is the reply's, a little after the request, as for idle
+    compaction: the page says "about"."""
+    if last is None or last.ttl not in CACHE_SECONDS:
+        return 0.0
+    return last.at + CACHE_SECONDS[last.ttl]
 
 
 def idle_compact_at(last: LastRequest | None) -> float:
@@ -10013,8 +10031,9 @@ def row(session: Session) -> dict[str, Any]:
         # context bar counts down to it.
         "idle_compact_at": round(session.idle_compact_at, 3),
         # How long the prompt cache of its last request lasts, "5m" or
-        # "1h", or "": the context bar says it.
+        # "1h", or "", and when it expires, or 0: the context bar says both.
         "cache_ttl": session.cache_ttl,
+        "cache_until": round(session.cache_until, 3),
         **mark_fields(session),
         **status_fields(session),
         # The session a `/clear` turned this one into. The page follows it
@@ -18204,15 +18223,40 @@ function putCompacts(parent, at) {
 
 // How long the prompt cache of the last request lasts, after the context
 // it holds: a reply after that writes the whole context to the cache again.
+// `until` is when it expires, or 0: `tickCache` counts down to it.
 const CACHE_LIFE = {"5m": "5 minutes", "1h": "1 hour"};
-function putCache(parent, ttl) {
+function putCache(parent, ttl, until) {
   const node = put(parent, "span", "cache", "cache " + ttl);
   node.title = "Claude Code wrote this session's last request to a prompt"
     + " cache that lasts " + CACHE_LIFE[ttl] + " after it. A prompt in that"
     + " time reads the context from the cache, at a tenth of the input price."
     + " A prompt after it writes the whole context to the cache again, at"
-    + " 1.25 times the input price.";
+    + " 1.25 times the input price."
+    + (until ? " The time is about: it is the time of the last reply." : "");
+  if (until) {
+    const left = put(node, "span", "cacheleft");
+    left.dataset.at = String(until);
+    tickCache(left);
+  }
   return node;
+}
+
+// When the chosen session's cache expires, or 0 (#689): only while it does
+// not work. A turn uses the cache with each request, so the moment moves
+// all the time; while the session waits for the reader, it stands.
+function cacheUntil(s) {
+  return (s && s.state !== "working" && CACHE_LIFE[s.cache_ttl] && s.cache_until) || 0;
+}
+
+// The time left, every second, as `tickCompacts` says its own. A cache gone
+// by says when it went: the next prompt writes the whole context again.
+function tickCache(node) {
+  const at = Number(node.dataset.at);
+  const left = at - (Date.now() / 1000 + state.skew);
+  node.classList.toggle("gone", left <= 0);
+  node.textContent = left > 0
+    ? " · until " + clock(at) + " (in " + lasted(left) + ")"
+    : " · expired " + clock(at);
 }
 
 function tickCompacts(node) {
@@ -20046,6 +20090,7 @@ function tickAges() {
     node.textContent = ago(Number(node.dataset.since));
   }
   for (const node of document.querySelectorAll("#ctxslot .compacts")) tickCompacts(node);
+  for (const node of document.querySelectorAll("#ctxslot .cacheleft")) tickCache(node);
 }
 
 // The browser tab's title and icon, and the alerts: the answer to "who needs
@@ -20693,6 +20738,7 @@ function drawContext() {
   const effort = (s && s.effort) || "";
   const compacts = idleCompactAt(s);
   const cache = (s && CACHE_LIFE[s.cache_ttl] && s.cache_ttl) || "";
+  const until = cacheUntil(s);
   slot.hidden = !hasContext(s) && !spent && !model && !compacts && !cache;
   if (slot.hidden) {
     slot.replaceChildren();
@@ -20701,7 +20747,7 @@ function drawContext() {
     return;
   }
   const shows = [model, effort, hasContext(s) ? Math.round(s.context_pct) : "",
-                 spent, compacts, cache].join("\n");
+                 spent, compacts, cache, until].join("\n");
   if (!fresh(slot, "shows", shows)) return;  // a push a second, rarely moved
   slot.replaceChildren();
   // The model and how hard it thinks (issue 337), as one button that opens
@@ -20718,7 +20764,7 @@ function drawContext() {
     });
   }
   if (hasContext(s)) putContext(slot, s.context_pct);
-  if (cache) putCache(slot, cache);
+  if (cache) putCache(slot, cache, until);
   if (compacts) putCompacts(slot, compacts);
   if (spent) {
     // Claude Code works this out on the client at list price and says so, and

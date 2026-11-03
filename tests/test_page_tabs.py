@@ -335,7 +335,7 @@ def test_the_context_bar_counts_down_to_idle_compaction(ws, page_at, monkeypatch
         assert page.evaluate("""() => [...document.getElementById('ctxslot').children]
                                         .map((one) => one.className)""") \
             == ["model", "ctx", "cache", "compacts", "spent"]
-        assert page.locator("#ctxslot .cache").inner_text() == "cache 1h"
+        assert page.locator("#ctxslot .cache").inner_text().startswith("cache 1h")
         # The moment comes: the tick takes it away.
         page.evaluate("""() => {
           document.querySelector('#ctxslot .compacts').dataset.at =
@@ -363,6 +363,38 @@ def test_the_context_bar_says_how_long_the_cache_lasts(page_at):
         assert "1.25 times" in shown.get_attribute("title")
         page.evaluate("""() => { patchSession("s1", {cache_ttl: "9m"}); drawHeader(); }""")
         page.wait_for_function("!document.querySelector('#ctxslot .cache')")
+
+
+def test_the_context_bar_counts_down_to_when_the_cache_expires(page_at):
+    """A prompt after the cache expires writes the whole context again
+    (#689), so the bar says when, and the time left, every second. A cache
+    gone by says when it went. While the session works, each request uses
+    the cache again and the moment moves, so it says only the lifetime."""
+    _, path = page_at
+    with opened(path) as page:
+        page.wait_for_selector("#ctxslot .ctx")
+        # The next push undoes a patch, so it is patched on an interval.
+        due = page.evaluate("""() => {
+          const due = Math.round(Date.now() / 1000 + state.skew + 41 * 60 + 30);
+          window.__patch = {state: "done", cache_ttl: "1h", cache_until: due};
+          setInterval(() => { patchSession("s1", window.__patch); drawHeader(); }, 50);
+          return due; }""")
+        page.wait_for_selector("#ctxslot .cacheleft")
+        clock = page.evaluate(f"clock({due})")
+        shown = page.locator("#ctxslot .cache")
+        assert shown.inner_text() in (f"cache 1h \u00b7 until {clock} (in 41min)",
+                                      f"cache 1h \u00b7 until {clock} (in 40min)"), \
+            shown.inner_text()
+        assert "about" in shown.get_attribute("title")
+        # The time left moves by itself, with no push to redraw it.
+        page.evaluate("""() => { document.querySelector('#ctxslot .cacheleft').dataset.at =
+          String(Date.now() / 1000 + state.skew + 1.5); }""")
+        page.wait_for_function("document.querySelector('#ctxslot .cacheleft')"
+                               ".textContent.startsWith(' \u00b7 expired ')")
+        # A working session: the lifetime alone.
+        page.evaluate("window.__patch.state = 'working'")
+        page.wait_for_function("!document.querySelector('#ctxslot .cacheleft')")
+        assert shown.inner_text() == "cache 1h"
 
 
 def test_a_session_that_was_told_no_cost_shows_none(ws, served):

@@ -1086,6 +1086,27 @@ def test_a_session_is_given_its_cache_s_lifetime_behind_the_fold(ws, transcript_
     assert store.rows[0]["cache_ttl"] == "", "no cache written, no lifetime known"
 
 
+def test_the_cache_expires_its_lifetime_after_the_last_request(ws, transcript_file):
+    """The context bar counts down to when the cache expires (#689): the
+    last request plus 5 minutes or 1 hour, at any size, and with idle
+    compaction off too. No cache written, no moment known."""
+    last = float(int(time.time()) - 60)      # the stamp keeps whole seconds
+    path = transcript_file("s1", [reply(last, tokens=20_000, ttl="5m")])
+    ws.append_event(conftest.event("SessionStart", ts=time.time(), transcript_path=str(path)))
+    ws.settings_path().write_text(json.dumps({"idleCompaction": False}))
+
+    def until():
+        store = ws.Store()
+        store.refresh()
+        return store.rows[0]["cache_until"]
+
+    assert until() == last + 300
+    path.write_text(conftest.records(reply(last, tokens=20_000, ttl="1h")))
+    assert until() == last + 3600
+    path.write_text(conftest.records(reply(last, ttl="")))
+    assert until() == 0
+
+
 def recap(text, at):
     """An `away_summary` record in the shape Claude Code's schema gives
     (2.1.312): no real one was measured, as the owner chose (#662)."""

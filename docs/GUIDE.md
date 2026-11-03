@@ -490,6 +490,11 @@ The model and its effort level, how full the context window is, and what the
 session has spent show at the end of the tab row, on every tab. Beside them,
 the terminal icon jumps to the agent's tmux pane (or press <kbd>Enter</kbd>).
 
+The bar also shows how long the prompt cache lasts, such as `cache 1h`. While
+the session waits for you, it counts down to when the cache expires, such as
+`until 10:32 (in 41min)`, and then shows `expired 09:44`. A prompt after that
+writes the whole context to the cache again, at 1.25 times the input price.
+
 Click the model to change it or its effort level. The menu offers the model
 names Claude Code knows (`opus`, `sonnet` and the others, each the newest of
 its family), the full names of the models your sessions ran this week, and the
