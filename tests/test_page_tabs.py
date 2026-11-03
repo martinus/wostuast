@@ -1162,9 +1162,31 @@ def test_each_subagent_is_a_line_that_opens_its_transcript(ws, page_at):
             ["1min", "Explore \u00b7 Find the parser \u00b7 2 calls"]], lines
         assert lines[1][2] == "100%" and 0 < int(lines[0][2][:-1]) < 100, lines
         assert lines[1][3].startswith("Two files.") and "open its transcript" in lines[1][3]
+        # All that ran are kept, so nothing says some were let go.
+        assert page.locator(".sumcard.wide .sumnote").count() == 0
         page.locator(".sumcard.wide .sumline", has_text="Find the parser").click()
         page.wait_for_function("state.agent && state.agent.id === 'ag1'")
         assert page.evaluate("state.tab") == "transcript"
+
+
+def test_the_subagents_list_says_when_it_keeps_fewer_than_ran(ws, page_at, monkeypatch):
+    """The daemon keeps the last `SUBAGENTS_HELD` subagents, so the list
+    says how many of those that ran it shows (#687)."""
+    daemon, path = page_at
+    monkeypatch.setattr(ws, "SUBAGENTS_HELD", 1)
+    now = time.time()
+    for at, agent in enumerate(("ag1", "ag2")):
+        on = dict(pane="%7", pid=1, agent_id=agent, agent_type="Explore")
+        ws.append_event(conftest.event("SubagentStart", ts=now - 100 + at * 10, **on))
+        ws.append_event(conftest.event("SubagentStop", ts=now - 95 + at * 10, **on))
+    daemon.store.refresh()
+    with opened(path) as page:
+        wait_for_map(page)
+        page.keyboard.press("4")
+        page.wait_for_selector(".sumcard.wide .sumline")
+        assert page.locator(".sumcard.wide .sumnote").inner_text() \
+            == "The last 1 of the 2 that ran."
+        assert page.locator(".sumcard.wide .sumline").count() == 1
 
 
 def test_the_statistics_tab_draws_the_month_against_the_allowance(ws, page_at):

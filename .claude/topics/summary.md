@@ -77,7 +77,8 @@ can optimize my future sessions to produce less churn".
   `agents_ran` that is. The card spans the grid's row: in half a card a
   task was cut to its first words. **The tab's poll redraws it**: a row's
   push draws no tab, so a redraw key for the row's subagents did nothing.
-  `test_each_subagent_is_a_line_that_opens_its_transcript`.
+  `test_each_subagent_is_a_line_that_opens_its_transcript`,
+  `test_the_subagents_list_says_when_it_keeps_fewer_than_ran`.
 - **Every list of the tab has a bar a line, drawn one way, `putSumBar`**
   (#685): time by tool, calls by tool, the costliest turns and the
   slowest calls, each as long as its share of the most in its list. A
