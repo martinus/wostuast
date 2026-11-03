@@ -119,9 +119,13 @@ before every `replace`. Its scars:
 - **Take a debug line out with an edit, never `git checkout <file>`**:
   that drops every change not committed, a new test too (#422).
 - **Grep for a name before you define it**: a second top-level `def` or
-  `function` silently replaces the first (`load_settings`).
+  `function` silently replaces the first (`load_settings`; `putCard` in
+  #692, which took the views' cards and turned ten view tests red).
+  `python3 tests/where.py NAME` says whether it is defined, and
+  `.claude/topics/reuse.md` lists the page's helpers.
   `test_no_name_is_defined_twice` runs with the tests that drive no
-  browser; run those first, as they name a second `KEPT` in seconds.
+  browser; run those first, as they name a second `KEPT` in seconds. The
+  gate in `CLAUDE.md` runs them first for this reason.
 
 ## The tools in `tests/`
 
