@@ -273,3 +273,12 @@ the loaders.
   and the hover says the price.
   `test_a_session_is_given_its_cache_s_lifetime_behind_the_fold`,
   `test_the_context_bar_says_how_long_the_cache_lasts`.
+  - **It counts down to when the cache expires, `cache 1h · until 10:32
+    (in 41min)`, and then says `expired 09:44`** (#689, `cache_until`,
+    `CACHE_SECONDS`, `cacheUntil`, `tickCache`): a prompt after it pays
+    the rewrite, and idle compaction's countdown shows only for 200,000
+    tokens or more. The moment is the last reply's time plus the cache's
+    life, so the hover says "about". **Not while the session works**: each
+    request uses the cache again, so the moment moves all the time.
+    `test_the_cache_expires_its_lifetime_after_the_last_request`,
+    `test_the_context_bar_counts_down_to_when_the_cache_expires`.
