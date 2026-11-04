@@ -1086,15 +1086,16 @@ def test_the_month_names_its_costliest_sessions_and_turns(pair_at):
     part a list is of."""
     import calendar
     _, path = pair_at
-    prompt = calendar.timegm((2026, 9, 18, 14, 2, 0))   # "Do the thing."
+    # Not the first block, so a link that went to block 0 is seen.
+    called = calendar.timegm((2026, 9, 18, 14, 4, 0))   # its `pytest -q`
     month = {"today": "2026-11-03", "length": 30, "days": [1.0, 2.0, 3.0],
              "since": "2026-11-01",
              "sessions": [{"id": "s2", "name": "", "usd": 4.0},
                           {"id": "gone", "name": "Port the map", "usd": 2.0}],
              "turns": [{"id": "s1", "name": "A session", "said": "Do the thing.",
-                        "ts": prompt, "usd": 1.5, "tokens": {"output_tokens": 9000}},
+                        "ts": called, "usd": 1.5, "tokens": {"output_tokens": 9000}},
                        {"id": "gone", "name": "Port the map", "said": "the iterator",
-                        "ts": prompt, "usd": 0.5, "tokens": {}}]}
+                        "ts": called, "usd": 0.5, "tokens": {}}]}
     with opened(path) as page:
         page.route("**/api/spend", lambda route: route.fulfill(
             status=200, content_type="application/json", body=json.dumps(month)))
@@ -1137,16 +1138,32 @@ def test_the_month_names_its_costliest_sessions_and_turns(pair_at):
         assert page.locator(".spendsvg >> nth=0 >> .spendband").count() == 2
         page.mouse.move(0, 0)
         page.wait_for_selector(".spendmark", state="detached")
-        # A session: its own statistics.
+        # A session: its own statistics, though it keeps another tab: s2
+        # was last read on its Transcript tab.
+        page.evaluate("""() => { choose('s2'); showTab('transcript');
+                                 choose('s1'); showTab('summary'); }""")
+        page.wait_for_selector(".sumpart.month .turnlink >> nth=3")
         page.locator(".sumpart.month .sumcard", has_text="costliest sessions") \
             .locator(".sumline").first.click()
         page.wait_for_function("state.chosen === 's2' && state.tab === 'summary'")
-        # A turn: its place in its session's transcript.
+        # A turn: its place in its session's transcript. The mark of the
+        # block landed on stays 2.5 s, and a loaded runner read it after it
+        # had gone: an observer set before the click keeps what it marked.
+        page.evaluate("""() => {
+          window.landedOn = [];
+          new MutationObserver((changes) => changes.forEach((one) => {
+            if (one.target.classList && one.target.classList.contains('linked')) {
+              window.landedOn.push(one.target.textContent);
+            }
+          })).observe(document.getElementById('content'),
+                      { subtree: true, attributes: true, attributeFilter: ['class'] });
+        }""")
         page.locator(".sumpart.month .sumcard", has_text="costliest turns") \
             .locator(".sumline").first.click()
-        page.wait_for_function("state.chosen === 's1' && state.tab === 'transcript'")
-        page.wait_for_selector("#content .linked")
-        assert "Do the thing." in page.locator("#content .linked").inner_text()
+        page.wait_for_function("window.landedOn.length > 0")
+        assert page.evaluate("state.chosen") == "s1"
+        assert page.evaluate("state.tab") == "transcript"
+        assert "pytest -q" in page.evaluate("window.landedOn[0]")
         # This session's bars, in their own colour: s1 ran a call.
         page.keyboard.press("4")
         page.wait_for_selector(".sumpart:not(.month) .sumbar")
