@@ -451,6 +451,12 @@ running total and what each day cost. Point at a day to read its amount.
 Set an **allowance** in the settings to see it as a line, and how much is
 left or over. The page only shows it: nothing stops an agent.
 
+Under the charts are the costliest sessions of the month, by what each
+spent this month, and the costliest turns of all sessions. Point at one to
+see on the charts the days it spent. Click a session to see its own
+statistics. Click a turn to read it in its transcript. The turns come only
+from the sessions that wostuast still keeps.
+
 Each status line keeps what its session spent, a day at a time, from the
 day you installed this version. A day's spend is how much each session's
 total grew that day. Without wostuast's status line, nothing is kept.
