@@ -1077,6 +1077,99 @@ def test_the_month_s_charts_show_the_weekdays_and_the_workdays_left(page_at):
         assert tile == "19\nworkdays left", tile
 
 
+def test_the_month_names_its_costliest_sessions_and_turns(pair_at):
+    """The month said only what all sessions spent (#698): the reader
+    asked which sessions and which turns cost the most. A session is a
+    link to its own statistics, a turn to its place in its transcript, by
+    its moment; one the page no longer has is named, not linked. Their
+    bars are the month's colour, not the session's, so a glance says which
+    part a list is of."""
+    import calendar
+    _, path = pair_at
+    # Not the first block, so a link that went to block 0 is seen.
+    called = calendar.timegm((2026, 9, 18, 14, 4, 0))   # its `pytest -q`
+    month = {"today": "2026-11-03", "length": 30, "days": [1.0, 2.0, 3.0],
+             "since": "2026-11-01",
+             "sessions": [{"id": "s2", "name": "", "usd": 4.0},
+                          {"id": "gone", "name": "Port the map", "usd": 2.0}],
+             "turns": [{"id": "s1", "name": "A session", "said": "Do the thing.",
+                        "ts": called, "usd": 1.5, "tokens": {"output_tokens": 9000}},
+                       {"id": "gone", "name": "Port the map", "said": "the iterator",
+                        "ts": called, "usd": 0.5, "tokens": {}}]}
+    with opened(path) as page:
+        page.route("**/api/spend", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(month)))
+        page.wait_for_function("state.sessions.length === 2")
+        name = page.evaluate("(id) => rowName(state.sessions.find((s) => s.id === id))", "s2")
+        mine = page.evaluate("(id) => rowName(state.sessions.find((s) => s.id === id))", "s1")
+        page.keyboard.press("4")
+        page.evaluate("loadSpend()")
+        page.wait_for_selector(".sumpart.month .turnlink >> nth=3")
+
+        def lines(title):
+            card = page.locator(".sumpart.month .sumcard", has_text=title)
+            return [[line.locator(".sumnum").inner_text(), line.locator(".sumsaid").inner_text(),
+                     line.is_disabled()] for line in card.locator(".sumline").all()]
+
+        assert lines("costliest sessions") == [["$4.00", name, False],
+                                               ["$2.00", "Port the map", True]]
+        assert lines("costliest turns") == [
+            ["\u2248$1.50", mine + " \u00b7 Do the thing.", False],
+            ["\u2248$0.50", "Port the map \u00b7 the iterator", True]]
+        # The month's bars are its charts' colour; the session's another.
+        colour = "(selector) => getComputedStyle(document.querySelector(selector)).backgroundColor"
+        spend = page.evaluate("getComputedStyle(document.querySelector('.spendday')).fill")
+        assert page.evaluate(colour, ".sumpart.month .sumbar") == spend
+        # On a hover, the days it spent stand out on both charts, as the
+        # reader asked: s2 spent on the 1st and the 3rd.
+        page.evaluate("state.spend.sessions[0].days = [1, 0, 3]")
+        page.evaluate("() => { const box = document.getElementById('content');"
+                      " box.dataset.summaryKey = ''; draw(); }")
+        page.locator(".sumpart.month .sumline").first.hover()
+        page.wait_for_selector(".spendmark .spendband", state="attached")
+        assert page.locator(".spendsvg >> nth=0 >> .spendband").count() == 2
+        assert page.locator(".spendsvg >> nth=0 >> .spendmineline").count() == 1
+        assert page.locator(".spendsvg >> nth=1 >> .spendmine").count() == 2
+        # Drawn again under a pointer that stays, as a poll draws it: the
+        # marks stay too.
+        page.evaluate("() => { const box = document.getElementById('content');"
+                      " box.dataset.summaryKey = ''; draw(); }")
+        page.wait_for_selector(".spendsvg >> nth=0 >> .spendband", state="attached")
+        assert page.locator(".spendsvg >> nth=0 >> .spendband").count() == 2
+        page.mouse.move(0, 0)
+        page.wait_for_selector(".spendmark", state="detached")
+        # A session: its own statistics, though it keeps another tab: s2
+        # was last read on its Transcript tab.
+        page.evaluate("""() => { choose('s2'); showTab('transcript');
+                                 choose('s1'); showTab('summary'); }""")
+        page.wait_for_selector(".sumpart.month .turnlink >> nth=3")
+        page.locator(".sumpart.month .sumcard", has_text="costliest sessions") \
+            .locator(".sumline").first.click()
+        page.wait_for_function("state.chosen === 's2' && state.tab === 'summary'")
+        # A turn: its place in its session's transcript. The mark of the
+        # block landed on stays 2.5 s, and a loaded runner read it after it
+        # had gone: an observer set before the click keeps what it marked.
+        page.evaluate("""() => {
+          window.landedOn = [];
+          new MutationObserver((changes) => changes.forEach((one) => {
+            if (one.target.classList && one.target.classList.contains('linked')) {
+              window.landedOn.push(one.target.textContent);
+            }
+          })).observe(document.getElementById('content'),
+                      { subtree: true, attributes: true, attributeFilter: ['class'] });
+        }""")
+        page.locator(".sumpart.month .sumcard", has_text="costliest turns") \
+            .locator(".sumline").first.click()
+        page.wait_for_function("window.landedOn.length > 0")
+        assert page.evaluate("state.chosen") == "s1"
+        assert page.evaluate("state.tab") == "transcript"
+        assert "pytest -q" in page.evaluate("window.landedOn[0]")
+        # This session's bars, in their own colour: s1 ran a call.
+        page.keyboard.press("4")
+        page.wait_for_selector(".sumpart:not(.month) .sumbar")
+        assert page.evaluate(colour, ".sumpart:not(.month) .sumbar") != spend
+
+
 def test_the_session_s_time_and_tokens_are_charts(ws, page_at):
     """Three times and four counts of tokens as plain numbers were hard to
     read (#688). The time is a line each with a bar on one scale, as time

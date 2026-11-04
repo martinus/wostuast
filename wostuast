@@ -4480,73 +4480,6 @@ def call_text(tool_name: str, tool_input: Any, target: str) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2, default=str)
 
 
-#: What a token costs against an input token, as Anthropic prices every
-#: model so far: a cache read a tenth, a cache write a quarter more, an
-#: output token five times. Only to share the status line's dollars out
-#: among the turns (#622): it names no price, and a model priced otherwise
-#: moves the shares, never the total.
-TOKEN_WEIGHTS = {"input_tokens": 1.0, "cache_creation_input_tokens": 1.25,
-                 "cache_read_input_tokens": 0.1, "output_tokens": 5.0}
-
-#: How many of the costliest turns the summary names.
-COSTLY_SHOWN = 8
-
-
-@dataclass
-class TurnCost:
-    """One turn of a transcript by what its replies used (#622): from the
-    reader's prompt to the next one."""
-
-    seq: int = -1               # the prompt's block, for a link to it
-    said: str = ""              # the prompt's start
-    ts: float = 0.0
-    tokens: dict[str, int] = field(default_factory=dict)
-    weight: float = 0.0         # tokens by `TOKEN_WEIGHTS`
-    replies: int = 0
-
-
-@dataclass
-class Costs:
-    """Where a transcript's tokens went (#622), kept as the reader reads.
-
-    Measured on 2.1.306: one reply spans a record a content block, up to
-    five, and each repeats the reply's `usage`. So a reply counts once, by
-    its `message.id`."""
-
-    turns: list[TurnCost] = field(default_factory=list)
-    tools: dict[str, int] = field(default_factory=dict)
-    seen: set[str] = field(default_factory=set)
-
-    def take(self, record: dict[str, Any], blocks: list["Block"]) -> None:
-        """One record of the transcript, and the blocks it made."""
-        for block in blocks:
-            if block.kind == "prompt":
-                self.turns.append(TurnCost(seq=block.seq, said=clip(block.text, 120),
-                                           ts=block.ts))
-        if record.get("type") != "assistant":
-            return
-        message = record.get("message")
-        if not isinstance(message, dict):
-            return
-        for part in message.get("content") or []:
-            if isinstance(part, dict) and part.get("type") == "tool_use":
-                tool = str(part.get("name") or "?")
-                self.tools[tool] = self.tools.get(tool, 0) + 1
-        mid, used = str(message.get("id") or ""), message.get("usage")
-        if not mid or mid in self.seen or not isinstance(used, dict):
-            return
-        self.seen.add(mid)
-        if not self.turns:
-            self.turns.append(TurnCost(said="(before the first prompt)"))
-        turn = self.turns[-1]
-        turn.replies += 1
-        for key, weight in TOKEN_WEIGHTS.items():
-            count = used.get(key)
-            if isinstance(count, int) and count > 0:
-                turn.tokens[key] = turn.tokens.get(key, 0) + count
-                turn.weight += weight * count
-
-
 class Transcript:
     """Reads a session's transcript into blocks, and follows it as it grows.
 
@@ -4885,6 +4818,141 @@ class Transcript:
         else:
             return None
         return self.keep(block)
+
+
+# --- turn costs: what a transcript's turns used, read with its blocks or alone (#622, #698) [topics/summary]
+
+
+#: What a token costs against an input token, as Anthropic prices every
+#: model so far: a cache read a tenth, a cache write a quarter more, an
+#: output token five times. Only to share the status line's dollars out
+#: among the turns (#622): it names no price, and a model priced otherwise
+#: moves the shares, never the total.
+TOKEN_WEIGHTS = {"input_tokens": 1.0, "cache_creation_input_tokens": 1.25,
+                 "cache_read_input_tokens": 0.1, "output_tokens": 5.0}
+
+#: How many of the costliest turns the summary names.
+COSTLY_SHOWN = 8
+
+
+@dataclass
+class TurnCost:
+    """One turn of a transcript by what its replies used (#622): from the
+    reader's prompt to the next one."""
+
+    seq: int = -1               # the prompt's block, for a link to it
+    said: str = ""              # the prompt's start
+    ts: float = 0.0
+    tokens: dict[str, int] = field(default_factory=dict)
+    weight: float = 0.0         # tokens by `TOKEN_WEIGHTS`
+    replies: int = 0
+
+
+@dataclass
+class Costs:
+    """Where a transcript's tokens went (#622), kept as the reader reads.
+
+    Measured on 2.1.306: one reply spans a record a content block, up to
+    five, and each repeats the reply's `usage`. So a reply counts once, by
+    its `message.id`."""
+
+    turns: list[TurnCost] = field(default_factory=list)
+    tools: dict[str, int] = field(default_factory=dict)
+    seen: set[str] = field(default_factory=set)
+
+    def take(self, record: dict[str, Any], blocks: list["Block"]) -> None:
+        """One record of the transcript, and the blocks it made."""
+        for block in blocks:
+            if block.kind == "prompt":
+                self.turns.append(TurnCost(seq=block.seq, said=clip(block.text, 120),
+                                           ts=block.ts))
+        if record.get("type") != "assistant":
+            return
+        message = record.get("message")
+        if not isinstance(message, dict):
+            return
+        for part in message.get("content") or []:
+            if isinstance(part, dict) and part.get("type") == "tool_use":
+                tool = str(part.get("name") or "?")
+                self.tools[tool] = self.tools.get(tool, 0) + 1
+        mid, used = str(message.get("id") or ""), message.get("usage")
+        if not mid or mid in self.seen or not isinstance(used, dict):
+            return
+        self.seen.add(mid)
+        if not self.turns:
+            self.turns.append(TurnCost(said="(before the first prompt)"))
+        turn = self.turns[-1]
+        turn.replies += 1
+        for key, weight in TOKEN_WEIGHTS.items():
+            count = used.get(key)
+            if isinstance(count, int) and count > 0:
+                turn.tokens[key] = turn.tokens.get(key, 0) + count
+                turn.weight += weight * count
+
+
+def turn_share(cost: float | None, weight: float, total: float) -> float | None:
+    """A turn's share of what its session spent: its weight of all the
+    turns' (#622). None when the status line says no cost. The one reader
+    of a share: the session's costliest turns and the month's (#698)."""
+    if not total or cost is None:
+        return None
+    return round(cost * weight / total, 4)
+
+
+def may_cost(line: bytes) -> bool:
+    """Whether a transcript line can hold a prompt or a reply's usage, for
+    `CostReader`: every line but a tool's result with no text. Those are
+    most of a transcript's bytes, and parsing them was most of the time.
+    A key in a line is a token with quotes on both sides; inside a string
+    the quotes are escaped, so a prompt that names `"tool_result"` is read.
+    A result with a text part (a subagent's, an MCP tool's) is read too:
+    a `user` record's text can be a prompt (`add_piece`)."""
+    return not (b'"tool_result"' in line and b'"text"' not in line
+                and b'"usage"' not in line)
+
+
+class CostReader:
+    """A transcript read for what its turns cost, and nothing else (#698):
+    the month's costliest turns, of every session that spent this month.
+
+    A whole reader (`Transcript.read_new`) keeps every block, tool results
+    whole, and a month of them is too much to hold. This one parses only
+    the lines `may_cost` lets through, and folds a reply into the counts
+    without making its blocks: only a `user` record can start a turn, so
+    only those are read into blocks, by the same `add` and `Costs.take` as
+    the whole reader, and the turns come out the same. A block's `seq` is
+    not the whole reader's, so a turn is found by its moment (`goToTs`).
+    It reads on from where it stopped (`Tail`), and starts again with the
+    file, as the whole reader does."""
+
+    def __init__(self, path: Path) -> None:
+        self.reader = Transcript(str(path))
+
+    def read(self) -> Costs:
+        """Read what is new, and give back the counts."""
+        tail = self.reader.tail
+        begun = False
+        for line in tail.lines():
+            # The tail knows whether it started over once it has begun.
+            if not begun:
+                begun = True
+                self.start_over()
+            if not may_cost(line):
+                continue
+            for record in json_objects([line]):
+                kept = self.reader
+                made = kept.add(record) if record.get("type") != "assistant" else []
+                kept.costs.take(record, made)
+        if not begun:
+            self.start_over()      # a file rewritten to nothing
+        return self.reader.costs
+
+    def start_over(self) -> None:
+        """Forget what was read, when the tail starts the file again."""
+        tail = self.reader.tail
+        if tail.restarted:
+            self.reader = Transcript(str(tail.path))
+            self.reader.tail = tail
 
 
 # --- git facts: run, and what git says about the agent's directory [topics/git, topics/safety]
@@ -10163,8 +10231,6 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
         for key, count in turn.tokens.items():
             tokens[key] = tokens.get(key, 0) + count
     worst = sorted(costs.turns, key=lambda turn: -turn.weight)[:COSTLY_SHOWN]
-    share = (lambda turn: round(status.cost_usd * turn.weight / total, 4)
-             if total and status.cost_usd is not None else None)
     kinds: dict[str, dict[str, Any]] = {}
     for one in session.subagents.values():
         held = kinds.setdefault(one.kind or "subagent",
@@ -10190,7 +10256,8 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
         # Its weight draws its bar (#685): the dollars are None when the
         # status line says no cost, and the weight is there always.
         "costly": [{"seq": turn.seq, "said": turn.said, "ts": turn.ts,
-                    "tokens": turn.tokens, "replies": turn.replies, "usd": share(turn),
+                    "tokens": turn.tokens, "replies": turn.replies,
+                    "usd": turn_share(status.cost_usd, turn.weight, total),
                     "weight": round(turn.weight, 1)}
                    for turn in worst if turn.weight],
         "subagents": sorted(kinds.values(), key=lambda one: -one["tokens"]),
@@ -10234,6 +10301,53 @@ def spend_json(now: float, totals: Iterable[dict[str, float]]) -> dict[str, Any]
             "days": [round(spent.get(f"{today[:8]}{n:02d}", 0.0), 4)
                      for n in range(1, day + 1)],
             "since": min(spent, default="")}
+
+
+def month_spent(now: float, days: dict[str, float]) -> float:
+    """How much one session's total grew this calendar month (#698), each
+    day as `spend_by_day` counts it."""
+    month = local_day(now)[:8]
+    return sum(usd for day, usd in spend_by_day([days]).items() if day.startswith(month))
+
+
+def month_costly_json(now: float, statuses: dict[str, Status],
+                      costs: dict[str, Costs]) -> dict[str, Any]:
+    """The sessions that spent the most this calendar month, and the turns
+    that cost the most of all of them (#698), for the Statistics tab.
+
+    A session's amount is how much its total grew this month, so a
+    session resumed from last month counts only this month's part. A
+    turn's is its share of its session's whole total (`turn_share`), of
+    the turns that began this month; `costs` holds only the sessions the
+    daemon still keeps, as their transcripts are found through them. The
+    name is the status line's, for a session the page no longer has. A
+    session's `days` and a turn's `day` mark where it spent on the month's
+    charts, as the reader asked."""
+    month, today = local_day(now)[:8], int(local_day(now)[8:])
+
+    def each_day(days: dict[str, float]) -> list[float]:
+        """Its amount each day of the month so far, as `spend_json`'s
+        `days`, for its marks on the charts."""
+        spent = spend_by_day([days])
+        return [round(spent.get(f"{month}{n:02d}", 0.0), 4) for n in range(1, today + 1)]
+
+    sessions = [{"id": session_id, "name": status.name,
+                 "usd": round(month_spent(now, status.days), 4),
+                 "days": each_day(status.days)}
+                for session_id, status in statuses.items()]
+    turns = []
+    for session_id, held in costs.items():
+        status = statuses.get(session_id, Status())
+        total = sum(turn.weight for turn in held.turns)
+        for turn in held.turns:
+            usd = turn_share(status.cost_usd, turn.weight, total)
+            if usd and turn.ts and local_day(turn.ts).startswith(month):
+                turns.append({"id": session_id, "name": status.name, "said": turn.said,
+                              "ts": turn.ts, "tokens": turn.tokens, "usd": usd,
+                              "day": int(local_day(turn.ts)[8:])})
+    return {"sessions": sorted((one for one in sessions if one["usd"] > 0),
+                               key=lambda one: -one["usd"])[:COSTLY_SHOWN],
+            "turns": sorted(turns, key=lambda one: -one["usd"])[:COSTLY_SHOWN]}
 
 
 def session_json(session: Session) -> dict[str, Any]:
@@ -10491,11 +10605,13 @@ class Daemon:
         #: -- another browser, or a hand in an editor -- goes out on the next
         #: tick (`tell_config`).
         self.config_seen = config_stamp()
-        #: Each status file's totals by day, by its name, with the stamp it
-        #: was read at (#653, `spend_totals`). A lock: every Statistics tab
-        #: asks from a request thread of its own.
-        self.spend_read: dict[str, tuple[int, dict[str, float]]] = {}
+        #: Each status file, by its name, with the stamp it was read at
+        #: (#653, `spend_statuses`). A lock: every Statistics tab asks from
+        #: a request thread of its own.
+        self.spend_read: dict[str, tuple[int, Status]] = {}
         self.spend_lock = threading.Lock()
+        #: Transcripts read for their costs alone, by path (#698, `month_costs`).
+        self.cost_readers: dict[Path, CostReader] = {}
         self.transcripts: dict[str, Transcript] = {}
         #: Subagents' own transcripts, by session and agent (#618).
         self.agent_readers: dict[tuple[str, str], Transcript] = {}
@@ -10631,21 +10747,55 @@ class Daemon:
             return list(held.blocks)
 
     def spend_totals(self) -> list[dict[str, float]]:
-        """Each status file's totals by day (#653), read again only when the
-        file changed: every open Statistics tab asks every ten seconds, and
-        nearly every file is a quiet session's."""
+        """Each status file's totals by day (#653)."""
         with self.spend_lock:
-            held: dict[str, tuple[int, dict[str, float]]] = {}
-            for path in status_dir().glob("*.json"):
-                try:
-                    stamp = path.stat().st_mtime_ns
-                except OSError:
-                    continue
-                known = self.spend_read.get(path.name)
-                held[path.name] = (known if known and known[0] == stamp
-                                   else (stamp, read_status_file(path).days))
-            self.spend_read = held
-            return [days for _, days in held.values()]
+            return [status.days for status in self.spend_statuses().values()]
+
+    def spend(self, now: float) -> dict[str, Any]:
+        """What all sessions spent this month, for the Statistics tab: each
+        day (#653), then the sessions and the turns that cost the most
+        (#698). Under the one lock, as a reader's counts grow as it reads."""
+        with self.spend_lock:
+            statuses = self.spend_statuses()
+            return {**spend_json(now, [status.days for status in statuses.values()]),
+                    **month_costly_json(now, statuses, self.month_costs(now, statuses))}
+
+    def spend_statuses(self) -> dict[str, Status]:
+        """Each status file, by its session's id, read again only when the
+        file changed: every open Statistics tab asks every ten seconds, and
+        nearly every file is a quiet session's. The caller holds
+        `spend_lock`."""
+        held: dict[str, tuple[int, Status]] = {}
+        for path in status_dir().glob("*.json"):
+            try:
+                stamp = path.stat().st_mtime_ns
+            except OSError:
+                continue
+            known = self.spend_read.get(path.name)
+            held[path.name] = (known if known and known[0] == stamp
+                               else (stamp, read_status_file(path)))
+        self.spend_read = held
+        return {name[:-len(".json")]: status for name, (_, status) in held.items()}
+
+    def month_costs(self, now: float, statuses: dict[str, Status]) -> dict[str, Costs]:
+        """The counts of each session that spent this month, by its id
+        (#698), from its transcript read for its costs alone
+        (`CostReader`), on from where the last ask stopped. Only a session
+        the daemon keeps, as the transcript is found through it: a month
+        quiet is when it lets one go (`SESSION_MAX_AGE`). The caller holds
+        `spend_lock`."""
+        readers: dict[Path, CostReader] = {}
+        found: dict[str, Costs] = {}
+        for session_id, status in statuses.items():
+            session = self.store.sessions.get(session_id)
+            path = safe_transcript(session.transcript_path) if session else None
+            if path is None or month_spent(now, status.days) <= 0:
+                continue
+            reader = self.cost_readers.get(path) or CostReader(path)
+            readers[path] = reader
+            found[session_id] = reader.read()
+        self.cost_readers = readers
+        return found
 
     def summary(self, session: Session) -> dict[str, Any]:
         """Where a session's tokens and time went (#622), after reading
@@ -11550,7 +11700,7 @@ class Serving:
     def spend(self, query: dict[str, str]) -> None:
         """What all sessions spent each day of the month (#653): asked for
         while the Statistics tab is up, not pushed."""
-        self.reply_json(spend_json(time.time(), self.daemon.spend_totals()))
+        self.reply_json(self.daemon.spend(time.time()))
 
     def events(self, query: dict[str, str]) -> None:
         self.stream(query.get("watch", ""))
@@ -15963,6 +16113,19 @@ button.sumline:not(:disabled):hover { background: var(--raised); }
 .sumnum { font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); }
 .sumsub { color: var(--ink-faint); font-variant-numeric: tabular-nums; }
 .sumsaid { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sumwho { color: var(--ink-faint); }
+/* All sessions' bars in the month's colour, the session's in its own
+   (issue 698): a glance says which part a list is of. */
+.sumpart.month .sumbar { background: var(--spend); }
+/* One line of the month's lists, on its charts (issue 698): the days it
+   spent, its running total and its part of each column, in the page's
+   brightest ink over the month's blue. Never in the pointer's way. */
+.spendmark { pointer-events: none; }
+.spendband { fill: color-mix(in srgb, var(--ink) 9%, transparent); }
+.spendmineline { fill: none; stroke: var(--ink-bright); stroke-width: 2;
+  stroke-linejoin: round; stroke-linecap: round; }
+.spendmine { fill: var(--ink-bright); opacity: .85; }
+.spendminelabel { fill: var(--ink-bright); }
 .sumbar {
   display: inline-block; height: 8px; border-radius: 4px; background: var(--needs);
   opacity: 0.7; vertical-align: middle;
@@ -27636,7 +27799,9 @@ function drawSummary(box) {
     putSumAgents(cards, got);
     putSumTools(cards, got);
   }
-  putSpend(put(pane, "section", "sumpart"), state.spend, allowance);
+  // `month`: its bars are the month's colour, the session's another, so a
+  // glance says which part a list is of, as the reader asked (#698).
+  putSpend(put(pane, "section", "sumpart month"), state.spend, allowance);
 }
 
 // A bar as long as its share of the most in its list, in the column after
@@ -27704,9 +27869,75 @@ function putSpend(pane, spend, allowance) {
       + (allowance ? "" : " Set a monthly allowance in the settings to see the way to it."));
   if (!allowance) note.title = ALLOWANCE_WHERE;
   put(pane, "h3", "sumtitle", "spent so far");
-  putSpendRun(pane, spend, allowance, pace);
+  const run = putSpendRun(pane, spend, allowance, pace);
   put(pane, "h3", "sumtitle", "each day");
-  putSpendDays(pane, spend);
+  const charts = { run, each: putSpendDays(pane, spend) };
+  const cards = put(pane, "div", "sumcards");
+  putMonthSessions(cards, spend.sessions || [], charts);
+  putMonthTurns(cards, spend.turns || [], charts);
+}
+
+// The sessions that spent the most this month (#698), as the reader asked:
+// each by how much its total grew this month, and a link to its own
+// statistics. A session the page no longer has is named, not linked;
+// either marks its days on the charts (`markSpend`).
+function putMonthSessions(pane, sessions, charts) {
+  if (!sessions.length) return;
+  const list = put(putSumCard(pane, "costliest sessions"), "div", "sumlist");
+  const most = sessions[0].usd || 1;
+  for (const one of sessions) {
+    const s = state.sessions.find((x) => x.id === one.id);
+    const line = put(list, "button", "sumline turnlink");
+    put(line, "span", "sumnum", money(one.usd));
+    putSumBar(line, one.usd / most);
+    put(line, "span", "sumsaid", s ? rowName(s) : one.name || one.id.slice(0, 8));
+    markSpend(line, charts, one.days || []);
+    if (!s) { line.disabled = true; line.title = "no longer kept"; continue; }
+    line.title = "show this session's statistics";
+    line.addEventListener("click", () => { choose(one.id); showTab("summary"); });
+  }
+}
+
+// The turns that cost the most this month, of all sessions (#698): each
+// its share of its session's spend, as the session's own list says it,
+// under its session's name, and a link to it in that transcript.
+function putMonthTurns(pane, turns, charts) {
+  if (!turns.length) return;
+  // The whole row of the grid: in half a card, the session's name left
+  // the prompt its first letters.
+  const card = putSumCard(pane, "costliest turns");
+  card.classList.add("wide");
+  put(card, "p", "sumnote", "\u2248 is each turn's share of what its session spent,"
+      + " by the tokens its replies used. Only the sessions kept here are read.");
+  const list = put(card, "div", "sumlist");
+  const most = turns[0].usd || 1;
+  for (const one of turns) {
+    const s = state.sessions.find((x) => x.id === one.id);
+    const line = put(list, "button", "sumline turnlink");
+    put(line, "span", "sumnum", "\u2248" + money(one.usd));
+    putSumBar(line, one.usd / most);
+    const said = put(line, "span", "sumsaid");
+    put(said, "span", "sumwho", (s ? rowName(s) : one.name || one.id.slice(0, 8)) + " \u00b7 ");
+    said.append(one.said);
+    const t = one.tokens || {};
+    const when = (dayOf(one.ts) ? dayOf(one.ts) + " " : "") + clock(one.ts);
+    const words = when + ": " + roughly(t.output_tokens || 0) + " out \u00b7 "
+      + roughly((t.input_tokens || 0) + (t.cache_creation_input_tokens || 0)
+                + (t.cache_read_input_tokens || 0)) + " in";
+    line.title = words;
+    markSpend(line, charts, Array.from({ length: one.day || 0 },
+                                       (_, at) => (at + 1 === one.day ? one.usd : 0)));
+    if (!s) { line.disabled = true; continue; }
+    line.title = words + ": show this turn in the transcript";
+    line.addEventListener("click", () => {
+      choose(one.id);
+      // `goTo` says a block is asked for at all; the moment says which:
+      // the counts were read without the blocks, so no `seq` is sent.
+      state.turns.goTo = 0;
+      state.turns.goToTs = one.ts;
+      showTab("transcript");
+    });
+  }
 }
 
 // Where the allowance is changed, on a hover over the word (#653).
@@ -27844,24 +28075,77 @@ function putSpendRun(pane, spend, allowance, pace) {
                         "text-anchor": "middle" }).textContent = money(spent);
   run.forEach((usd, at) => putSpendHit(chart, at + 1, `${money(usd)} so far,`
                                        + ` ${money(spend.days[at])} that day`, spend));
+  return chart;
 }
 
 // What each day cost, a column a day.
 function putSpendDays(pane, spend) {
   const chart = putMonthChart(pane, spend, 150, Math.max(...spend.days, 0.01), 2,
                               "spent each day this month");
-  const { svg, x, y } = chart;
-  const wide = Math.min(24, chart.slot * 0.7);
   spend.days.forEach((usd, at) => {
-    const left = x(at + 0.5) - wide / 2;
-    const tall = y(0) - y(usd);
-    if (tall < 0.5) return;
-    const round = Math.min(4, tall, wide / 2);
-    putSvg(svg, "path", { class: "spendday", d: `M${left} ${y(0)} V${y(usd) + round}`
-      + ` Q${left} ${y(usd)} ${left + round} ${y(usd)} H${left + wide - round}`
-      + ` Q${left + wide} ${y(usd)} ${left + wide} ${y(usd) + round} V${y(0)} Z` });
+    const d = spendColumn(chart, at, usd);
+    if (d) putSvg(chart.svg, "path", { class: "spendday", d });
   });
   spend.days.forEach((usd, at) => putSpendHit(chart, at + 1, money(usd), spend));
+  return chart;
+}
+
+// The column of one day's amount, its top corners round; "" when it is
+// too small to see.
+function spendColumn(chart, at, usd) {
+  const { x, y } = chart;
+  const wide = Math.min(24, chart.slot * 0.7);
+  const left = x(at + 0.5) - wide / 2;
+  const tall = y(0) - y(usd);
+  if (tall < 0.5) return "";
+  const round = Math.min(4, tall, wide / 2);
+  return `M${left} ${y(0)} V${y(usd) + round}`
+    + ` Q${left} ${y(usd)} ${left + round} ${y(usd)} H${left + wide - round}`
+    + ` Q${left + wide} ${y(usd)} ${left + wide} ${y(usd) + round} V${y(0)} Z`;
+}
+
+// What one line of the month's lists spent, on both charts, while the
+// pointer or the focus is on it (#698), as the reader asked: on which
+// days it happened. A band behind each day it spent, its own running
+// total on the line's scale, and its part of each day's column. `days`
+// is its amount each day so far. Drawn into the charts and taken out
+// again, never into `state`: a hover changes no data.
+function markSpend(line, charts, days) {
+  const off = () => {
+    for (const chart of [charts.run, charts.each]) {
+      chart.svg.querySelectorAll(".spendmark").forEach((one) => one.remove());
+    }
+  };
+  const on = () => {
+    off();
+    const [run, each] = [charts.run, charts.each].map((chart) => {
+      const mark = putSvg(chart.svg, "g", { class: "spendmark" });
+      days.forEach((usd, at) => {
+        if (usd > 0) putSvg(mark, "rect", { class: "spendband", x: chart.x(at), y: CHART.top,
+                                            width: chart.slot, height: chart.y(0) - CHART.top });
+      });
+      return mark;
+    });
+    let total = 0;
+    const points = [[charts.run.x(0), charts.run.y(0)]];
+    days.forEach((usd, at) => {
+      total += usd;
+      points.push([charts.run.x(at + 1), charts.run.y(total)]);
+      const d = spendColumn(charts.each, at, usd);
+      if (d) putSvg(each, "path", { class: "spendmine", d });
+    });
+    putSvg(run, "path", { class: "spendmineline",
+                          d: points.map(([px, py], at) => (at ? "L" : "M") + px + " " + py).join(" ") });
+    // Its amount at the line's end: on a month's scale, one session's line
+    // runs low, and the number says what the line cannot.
+    const [endX, endY] = points[points.length - 1];
+    putSvg(run, "text", { class: "spendlabel spendminelabel", x: endX + 8, y: endY + 4 })
+      .textContent = money(total);
+  };
+  line.addEventListener("mouseenter", on);
+  line.addEventListener("mouseleave", off);
+  line.addEventListener("focus", on);
+  line.addEventListener("blur", off);
 }
 
 // A day's whole height, which says on a hover what it holds.

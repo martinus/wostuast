@@ -45,7 +45,8 @@ can optimize my future sessions to produce less churn".
   `test_the_summary_tab_says_where_the_tokens_went`.
 - **The tab is "Statistics", in two sections: this session, then all
   sessions this month** (#653, `drawSummary`, `putSpend`), as the reader
-  asked; more about all sessions is to come there. Its key in the code
+  asked; more about all sessions is to come there (#698 named its costliest
+  sessions and turns). Its key in the code
   stays `summary`.
   - **The sections stand side by side where the pane is wide enough, and
     the session's lists are cards in a grid** (#683, `.sumpart`,
@@ -123,6 +124,38 @@ can optimize my future sessions to produce less churn".
   a hover (`ALLOWANCE_WHERE`), as the reader asked: on the tile, the
   chart's label, and the note when none is set.
   `test_the_statistics_tab_draws_the_month_against_the_allowance`.
+- **The month names its costliest sessions and turns** (#698,
+  `month_costly_json`, `putMonthSessions`, `putMonthTurns`), as the reader
+  asked. A session's amount is how much its total grew this month
+  (`month_spent`), from the status files. A turn's is its share of its
+  session's whole total (`turn_share`, the one reader of a share, which the
+  session's own list uses too), of the turns that began this month.
+  **Only the sessions the daemon keeps give turns**: their transcripts are
+  found through them, and a month quiet is when one goes
+  (`SESSION_MAX_AGE`). A session the page no longer has is named, not
+  linked. A turn links by its moment (`goToTs`), as its `seq` is not the
+  whole reader's.
+  - **The month's transcripts are read for their costs alone**
+    (`CostReader`, `may_cost`): a whole reader keeps every block, tool
+    results whole, and a month of them is too much to hold. It parses no
+    tool's result without text, and makes blocks only of a `user` record,
+    with the same `add` and `Costs.take`, so the turns are the same. On 30
+    real transcripts the turns were the same and the read 10 to 30 times
+    faster: 65 MB in 0.3 s. The readers are kept by path (`cost_readers`),
+    read on from where they stopped, under `spend_lock`.
+  - **The month's bars are its charts' blue, the session's amber** (`.sumpart.month
+    .sumbar`), as the reader asked: a glance says which part a list is of.
+  - **A hover or the focus on a line marks its days on both charts**
+    (`markSpend`, a session's `days`, a turn's `day`), as the reader asked:
+    a band behind each day it spent, its running total with its amount at
+    the end, and its part of each column. Drawn into the charts, never into
+    `state`. A redraw under a pointer that stays loses nothing: Chromium
+    sends a new `mouseenter`.
+  `test_the_cost_reader_reads_the_turns_the_whole_reader_does`,
+  `test_the_cost_reader_reads_on_and_starts_again_with_the_file`,
+  `test_the_month_s_costliest_sessions_and_turns`,
+  `test_the_daemon_reads_the_month_s_turns_of_the_sessions_it_keeps`,
+  `test_the_month_names_its_costliest_sessions_and_turns`.
 - **The month's charts show the weekdays, and a tile counts the workdays
   left** (#684, `spendWeekday`, `workdaysLeft`, `.spendweekend`), as the
   reader asked, to see how many days of work the month still has: a
