@@ -253,9 +253,10 @@ def test_the_tabs_start_at_the_top_and_the_name_heads_the_session_list(page_at):
     """A bar across the whole page held the name, a count of sessions, the
     counts by state, the alerts and the colours. The reader asked for the
     room back: the counts are the sidebar's groups again, the name and the
-    version head the session list, and the two buttons are icons at the end
-    of the tab row -- which now starts at the top of the window, level with
-    the head of the list beside it."""
+    version head the session list, and the tab row starts at the top of the
+    window, level with the head of the list beside it. The settings are an
+    icon at the end of that head (#702): they are the page's, and in the tab
+    row they stood among the session's tabs."""
     with opened(page_at) as page:
         out = page.evaluate("""() => {
           const box = (sel) => document.querySelector(sel).getBoundingClientRect();
@@ -265,15 +266,16 @@ def test_the_tabs_start_at_the_top_and_the_name_heads_the_session_list(page_at):
                   headBottom: box('.sidebar-head').bottom,
                   brand: head.querySelector('.brand').textContent,
                   version: head.querySelector('.version').textContent,
-                  settings: !!document.querySelector('.tabs #settings svg'),
-                  words: document.querySelector('.tabs #settings').textContent};
+                  settings: !!document.querySelector('.sidebar-head #settings svg'),
+                  words: document.querySelector('.sidebar-head #settings').textContent,
+                  inTabs: document.querySelectorAll('.tabs #settings').length};
         }""")
         assert out["topbar"] == 0
         assert out["tabsTop"] == 0
         assert abs(out["tabsBottom"] - out["headBottom"]) <= 1, out
         assert out["brand"] == "wostuast"
         assert " · " in out["version"] and "__" not in out["version"]
-        assert out["settings"] and out["words"] == ""
+        assert out["settings"] and out["words"] == "" and out["inTabs"] == 0
 
 
 def test_the_name_links_to_the_project(page_at):
@@ -292,7 +294,8 @@ def test_the_name_links_to_the_project(page_at):
 def test_the_robot_stands_before_the_name_and_in_the_folded_strip(page_at):
     """The tab's robot, before "wostuast" in the name's colour: drawn three
     times its size, so it is sharp; drawn again when the theme changes the
-    name's colour. Folded, it is all the head shows."""
+    name's colour. Folded, the head shows the settings alone (#702): the
+    strip needs them in reach more than it needs the logo."""
     logo = """() => { const one = document.querySelector('.brand .logo');
       return {shown: !!one.getClientRects().length, src: one.src, wide: one.naturalWidth,
               name: !!document.querySelector('.brandname').getClientRects().length,
@@ -306,7 +309,8 @@ def test_the_robot_stands_before_the_name_and_in_the_folded_strip(page_at):
         assert page.evaluate(logo)["src"] != dark["src"]
         page.click("#sessionfold")
         folded = page.evaluate(logo)
-        assert folded["shown"] and not folded["name"] and not folded["version"], folded
+        assert not folded["shown"] and not folded["name"] and not folded["version"], folded
+        assert page.locator(".sidebar-head #settings").is_visible()
 
 
 def test_the_settings_stand_in_four_titled_groups(page_at):

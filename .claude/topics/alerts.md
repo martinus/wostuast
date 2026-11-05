@@ -76,6 +76,7 @@ and the robot.
   - **The same robot stands before the name, in the name's amber**
     (`drawLogo`, `.brand .logo`, `.brandname`), the reader's choice: the
     tab icon says the state. It reads the name's colour, so `showTheme`
-    redraws it; drawn at 64, three times its size, to be sharp. Folded, it
-    is all the head shows (`.foldsessions .sidebar-head`).
+    redraws it; drawn at 64, three times its size, to be sharp. Folded, the
+    head shows the settings instead (#702, `.foldsessions .sidebar-head`):
+    they must stay in reach, and the strip needs no logo.
     `test_the_robot_stands_before_the_name_and_in_the_folded_strip`.

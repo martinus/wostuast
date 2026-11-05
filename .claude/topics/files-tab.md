@@ -11,9 +11,18 @@ The listing and the tree, find, icons, hex, and how a file is drawn.
   the folders the agent stood in (`cwd`) or touched a file in (an absolute
   path in a call's input), the latest last, `DIRS_HELD` of them. Git turns
   them into repositories only when the page asks `places`, as the fold does
-  no I/O; a folder that is in no repository is none. The picker beside the
-  tabs shows when there are two, and every Files and Review route reads
-  it through `apiUrl` (`PLACED`).
+  no I/O; a folder that is in no repository is none. The picker heads the
+  list column of the Files and Review tabs, and every Files and Review
+  route reads it through `apiUrl` (`PLACED`).
+  - **The picker's slot moves as the find box does** (#702, `#places`,
+    `homePlaces`, `sendHome`): into the list column, over the find box, as
+    the reader chose, and home to `#placehome` before a box that holds it
+    is emptied, or it goes with its listeners. Last in the column's DOM and
+    first by `order`, so `split`'s parts keep their places. **Folded, the
+    column keeps its height, hidden**: a fold button that moved up by it was
+    not under the pointer any more (#492).
+    `test_the_folder_picker_heads_the_list_and_the_transcript_button_ends_the_bar`,
+    `test_a_fold_button_stays_where_it_was_pressed`.
   - **The own place is the repository the agent stands in, else the one it
     started in** (`own_place`): the tabs read `cwd` before #616, and a `cd`
     out of every repository left them empty under a picker that named the

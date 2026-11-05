@@ -340,6 +340,14 @@ def daemon_transcript(daemon):
     return daemon.transcript("s1").tail.path
 
 
+#: Where the tab row's controls end, inside its padding, for a line that
+#: must end on it: the settings at its end moved to the list's head (#702),
+#: and its last control (`#jump`) is there only with a pane.
+TABS_END = """() => { const tabs = document.querySelector('.tabs');
+  return tabs.getBoundingClientRect().right
+    - parseFloat(getComputedStyle(tabs).paddingRight); }"""
+
+
 def watch_landings(page):
     """Keep the text of each block a link lands on, in `window.landedOn`.
 

@@ -342,7 +342,7 @@ reply to show a copy button at the block's own top right. It copies the
 block and nothing else.
 
 To read the transcript while you read files or a review, press <kbd>t</kbd>
-or click the two-column button beside the tabs. The transcript then stands
+or click the two-column button at the right of the tab's bar. The transcript then stands
 in a column on the right of the Files and Review tabs, with the question bar
 and the send box under it, and it follows the agent as the Transcript tab
 does. Drag its left edge to make it wider or narrower, and double-click
@@ -380,7 +380,7 @@ The funnel button beside **go to file** shows only the changed files and
 the folders that hold them, and the line under it says how many of how
 many.
 
-When the agent also works in another repository, a picker beside the tabs
+When the agent also works in another repository, a picker at the top of the file list
 names the session's own repository and each other one. Pick one, and the
 Files and Review tabs show it. Another repository is "read only": you can
 read it, but not comment, as a review goes to the agent with paths from its
@@ -543,7 +543,7 @@ also answer it in the terminal; the question then goes from the page.
 
 ### Alerts
 
-The **settings** button at the end of the tab row holds two switches for alerts. One tells you when an agent needs
+The **settings** button at the top of the session list holds two switches for alerts. One tells you when an agent needs
 you. The other tells you when an agent has finished. The first is on as soon as
 you allow alerts, because that is what this tool is for. The second is off
 until you turn it on. Both use your browser's own notifications, so the
@@ -560,7 +560,7 @@ hidden, because an alert can show on a locked screen.
 
 ### Settings
 
-The **settings** button (the sliders, at the end of the tab row) holds all
+The **settings** button (the sliders, at the top of the session list) holds all
 the settings, in four groups: page, code, review and links.
 
 Five of them are also small buttons beside the code they change. The
