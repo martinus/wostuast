@@ -29,6 +29,12 @@ throwaway home, and edit scripts for the one large file.
   - `drawHeader()` draws the bars over the transcript, not `draw()`.
   - `tour.py --hover SELECTOR` shows what only a hover shows: the tour
     moves the pointer, so a `mouseover` from `--eval` drew nothing.
+  - **A made-up block goes into a new `state.turns.blocks`, never pushed
+    onto the old one**: the transcript beside a tab redraws only when the
+    array is another one, and drew nothing. A long message is opened by
+    its `seq` in `state.turns.open`, not by `textKey` (#700, #701).
+  - **A mockup that moves a real control moves it again on an interval**:
+    a tab's draw rebuilds its bars, and the control went with them (#702).
 - **Every tool keeps to its own home through `conftest.isolate(home)`**,
   called by each function that writes (`stage.serve`, `shot.serve`,
   `tour.make_sessions`, `scale.measure`), not only by `main`: a script
@@ -45,7 +51,10 @@ throwaway home, and edit scripts for the one large file.
   sent from the scratchpad after a restart arrived as nothing. **The main
   checkout's, not a worktree's**: the reader's app opens files under the
   main one only. Put before and after in one PNG, labelled:
-  `tests/pair.py OUT before=OLD after=NEW --clip X,Y,W,H`. **While you wait, the stop hook asks for
+  `tests/pair.py OUT before=OLD after=NEW --clip X,Y,W,H`. **Three
+  options or more of a whole window are one picture each, not one
+  `pair.py`**: it lays them side by side, and three of 1,440 px were too
+  small to read (#702). **While you wait, the stop hook asks for
   a commit and a push**: push the branch, which starts nothing, and open
   the pull request after the yes. **Write that commit's message as
   final**: a squash later needs a force-push, which is refused, so a
