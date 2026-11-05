@@ -111,9 +111,11 @@ the reader sees them.
     on every redraw is the cost the fold saves.
   - **A find that matches the message draws it whole**, or the hit is
     hidden. `test_a_search_opens_a_folded_message_where_it_matches`.
-  - **Open, the bar is sticky at the pane's foot, at the right**, so a log
-    folds from its middle; at the left it covered a line's start. **Folding
-    calls `scrollIntoView`**, or the reader is left far below.
+  - **Open, the bar is sticky at the pane's foot, at the left, where "show
+    all" was** (#700), so a log folds from its middle. At the right it
+    covered a line's end and not its start, but the reader looked for it
+    where they had opened it, and chose the left. **Folding calls
+    `scrollIntoView`**, or the reader is left far below.
     `test_folding_from_the_foot_of_the_pane_keeps_the_message_in_sight`.
   - **The bar is in the sans face, and the count is "2.4k"**: the fixed face
     and "2,401" took two rows (issue 332).
@@ -168,6 +170,11 @@ the reader sees them.
   mid-foot, `ICONS.down` alone as the reader asked, the words in `title` and
   `aria-label`. It sets `display`; the one `[hidden]` rule still hides it.
   `test_the_way_back_is_an_arrow_in_the_middle`.
+  - **Beside a tab, the column is a flex column, not the tab's grid**
+    (#701, `.chat > .tofoot`): there `align-self: end` is the right edge,
+    and the arrow stood at it, under the transcript. It is centred, and a
+    top margin as tall as it lifts it over the transcript's foot.
+    `test_the_way_back_beside_a_tab_is_in_the_middle_of_its_column`.
 - **`showToFoot` is handed both nodes; never look the button up.** It runs
   on every scroll event and push, and `box.querySelector(".tofoot")` walks
   the whole transcript first.

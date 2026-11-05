@@ -16401,6 +16401,12 @@ body.sidechat .main > .chat {
 }
 .chat > .chathead b { color: var(--ink); font-weight: 600; flex: 1 1 auto; }
 .chat > .turnbody { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: 14px 16px; }
+/* The way back to the latest, in the middle of the column's foot (issue
+   701). The column is a flex column, not the tab's grid: there the arrow's
+   `align-self: end` put it at the right edge, under the transcript. A top
+   margin as tall as it and its own foot margin lifts it over the
+   transcript's foot and takes no height. */
+.chat > .tofoot { align-self: center; margin: -48px 0 16px; }
 .main > .sendbar { grid-row: 4; grid-column: 3; position: relative; }
 /* The page's one button shape. A full-strength `.verb` reaches the terminal —
    jump, send, submit a review — and there are only a few of those. `.quiet` is
@@ -16866,7 +16872,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 /* A message too long to show whole (`foldedHead`): its first lines, fading
    out, and the bar under it. Open, the bar stays at the foot of the pane
    while any of the message is on screen, so it folds from anywhere in it --
-   at the right, where it covers the end of a line and not its start. */
+   at the left, where "show all" was, as the reader asked (issue 700): at
+   the right it was found in another place than it was opened from. */
 .foldbox { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
 .folded {
   -webkit-mask-image: linear-gradient(to bottom, black 50%, transparent);
@@ -16884,7 +16891,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round;
   transform: rotate(90deg);
 }
-.foldbar.open { position: sticky; bottom: 8px; align-self: flex-end; }
+.foldbar.open { position: sticky; bottom: 8px; }
 .foldbar.open .icon { transform: rotate(-90deg); }
 /* One of the reader's own autolinks. It sits inside an agent's words, so it
    is underlined rather than coloured: a colour here would compete with the

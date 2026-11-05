@@ -810,6 +810,31 @@ def test_the_transcript_stands_beside_the_review_and_follows_the_agent(page_at):
           kept: localStorage.getItem('wostuast-chat')})""")
         assert gone == {"chat": True, "send": "main", "folded": False, "kept": None}, gone
 
+def test_the_way_back_beside_a_tab_is_in_the_middle_of_its_column(page_at):
+    """Beside the Review tab, the arrow back to the latest stood at the
+    column's right edge, under the transcript (#701): the column is a flex
+    column, where the arrow's `align-self: end` is the right. It stands in
+    the middle of the column, over the transcript's foot, as in the tab."""
+    daemon, path = page_at
+    write_records(daemon, *[conftest.record(*one) for at in range(30) for one in (
+        ("you", f"Step {at}."), ("claude", "Done.\n\n" * 6))])
+    daemon.store.refresh()
+    with opened(path) as page:
+        wait_for_map(page)
+        page.keyboard.press("t")
+        page.wait_for_function("document.querySelectorAll('#chat .turnbody > .turn').length > 40")
+        page.eval_on_selector("#chat .turnbody", "el => el.scrollTop = 0")
+        page.wait_for_selector("#chat .tofoot", state="visible")
+        out = page.evaluate("""() => {
+          const b = document.querySelector('#chat .tofoot').getBoundingClientRect();
+          const p = document.querySelector('#chat .turnbody').getBoundingClientRect();
+          return {middle: (b.left + b.right) / 2 - (p.left + p.right) / 2,
+                  foot: p.bottom - b.bottom};
+        }""")
+        assert abs(out["middle"]) < 2, out
+        assert 0 < out["foot"] < 40, out
+
+
 def test_the_transcript_is_never_beside_itself(page_at):
     """On the Transcript tab the column would be the tab twice: wanted or
     not, it stands only beside Files and Review."""

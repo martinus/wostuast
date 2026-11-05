@@ -2686,6 +2686,7 @@ def test_folding_from_the_foot_of_the_pane_keeps_the_message_in_sight(page_at):
             for n in range(80)])
         daemon.tick()
         page.wait_for_selector(".turn.mine .foldbar")
+        shut = page.locator(".turn.mine .foldbar").bounding_box()
         page.locator(".turn.mine .foldbar").click()
         page.wait_for_selector(".turn.mine .foldbar.open")
         page.evaluate("""() => {
@@ -2703,6 +2704,8 @@ def test_folding_from_the_foot_of_the_pane_keeps_the_message_in_sight(page_at):
           return bar.bottom <= pane.bottom && bar.top >= pane.top;
         }""")
         assert within, "the open bar is not on screen in the middle of the log"
+        # At the left, where "show all" was, as the reader asked (#700).
+        assert abs(bar.bounding_box()["x"] - shut["x"]) < 1, (bar.bounding_box(), shut)
         bar.click()
         page.wait_for_selector(".turn.mine .bubble.folded")
         seen = page.evaluate("""() => {
