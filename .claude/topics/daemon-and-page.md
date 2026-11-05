@@ -12,6 +12,21 @@ the loaders.
 - **Write to a terminal only through the four tmux verbs**: `tmux_jump`,
   `tmux_send`, `tmux_interrupt`, `tmux_keys`. Each looks up `run` when
   called, so a test can fake tmux.
+- **Between two ticks the daemon looks for news every `LOOK_EVERY`, and
+  ticks at once when the event log or a shown transcript grew** (#703,
+  `wait_for_news`, `news`): a line Claude Code wrote reached the page up to
+  a whole `TICK` later. Measured from a line written to its push queued:
+  median 450 ms, at most 971, before; 119 and 197 after. A look is a `stat`
+  a file, and a tick costs about 5 ms at 100 sessions (`tests/scale.py`),
+  so a quiet daemon does no more work. Only a watched transcript counts:
+  one nobody shows is read by no tick.
+  `test_the_next_tick_comes_once_the_log_or_a_shown_transcript_grows`.
+  - **A reply still being written is not in the transcript yet.**
+    Measured on 2.1.318 with `tests/claude_pane.py`: a text block streamed
+    over 8 s showed its first words in the terminal at 0.5 s, and reached
+    the transcript at 8.6 s, when it ended. So a long reply comes to the
+    page when it ends. The terminal is the only place it is before, and
+    reading it is a terminal emulator, a non-goal (topics/goals).
 - **The Files and Diff tabs poll from the browser, only while on screen**:
   the daemon knows no browser's tab, so `Hub` stays small. `TABS` holds
   one entry per tab.

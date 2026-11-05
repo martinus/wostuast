@@ -536,6 +536,58 @@ def test_a_broken_tick_does_not_stop_the_daemon(served, monkeypatch):
     assert calls, "the tick never ran"
 
 
+def test_the_next_tick_comes_once_the_log_or_a_shown_transcript_grows(
+        ws, served, transcript_file, monkeypatch):
+    """A line Claude Code wrote reached the page up to a whole `TICK`
+    later (#703). Between ticks the daemon looks every `LOOK_EVERY`, and
+    the wait ends once the event log or the transcript of a session a
+    browser shows has grown. A transcript nobody shows does not end it."""
+    daemon, _ = served
+    monkeypatch.setattr(ws, "TICK", 30.0)
+    monkeypatch.setattr(ws, "LOOK_EVERY", 0.02)
+    path = transcript_file("s1", [])
+    ws.append_event(event("SessionStart", transcript_path=str(path)))
+    daemon.store.refresh()
+    assert daemon.transcript("s1").tail.path == path
+
+    def ends_the_wait(change) -> bool:
+        done = threading.Event()
+        threading.Thread(target=lambda: (daemon.wait_for_news(), done.set()),
+                         daemon=True).start()
+        time.sleep(0.1)
+        change()
+        ended = done.wait(3)
+        daemon.stopping.set()             # let a wait that goes on go
+        time.sleep(0.1)
+        daemon.stopping.clear()
+        return ended
+
+    def grow() -> None:
+        with path.open("a") as handle:
+            handle.write("{}\n")
+
+    try:
+        assert not ends_the_wait(grow), "a transcript nobody shows ended the wait"
+        client = daemon.hub.add("s1")
+        assert ends_the_wait(grow), "the shown transcript grew, and the wait went on"
+        daemon.hub.drop(client)
+        assert ends_the_wait(lambda: ws.append_event(event("Notification", message="hi"))), \
+            "the event log grew, and the wait went on"
+        # And the daemon's own loop waits so.
+        ticks = []
+        real = daemon.tick
+        monkeypatch.setattr(daemon, "tick", lambda: (ticks.append(1), real()))
+        threading.Thread(target=daemon.run, daemon=True).start()
+        deadline = time.monotonic() + 3
+        while not ticks and time.monotonic() < deadline:
+            time.sleep(0.02)
+        ws.append_event(event("Notification", message="again"))
+        while len(ticks) < 2 and time.monotonic() < deadline + 3:
+            time.sleep(0.02)
+        assert len(ticks) >= 2, "the loop waited out its tick"
+    finally:
+        daemon.stopping.set()
+
 # --- what the page is sent ---------------------------------------------------
 
 

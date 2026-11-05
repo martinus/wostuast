@@ -120,6 +120,11 @@ DEFAULT_PORT = 7331
 #: How often the daemon looks for new events.
 TICK = 1.0
 
+#: How often, between two ticks, the daemon looks whether the event log or a
+#: transcript a browser shows has grown (#703): a `stat` each. When one has,
+#: the next tick comes at once, not at the end of `TICK`.
+LOOK_EVERY = 0.2
+
 #: A browser that stops reading is dropped rather than allowed to grow without
 #: limit. Twenty updates is far more than a live page is ever behind by.
 CLIENT_BACKLOG = 20
@@ -11317,7 +11322,36 @@ class Daemon:
                 self.tick()
             except Exception as error:  # a bad tick must not stop the daemon
                 log(f"tick failed: {error!r}")
-            self.stopping.wait(TICK)
+            self.wait_for_news()
+
+    def wait_for_news(self) -> None:
+        """Wait for the next tick: `TICK`, or less once the event log or a
+        transcript a browser shows has grown (#703). A line Claude Code
+        wrote reached the page up to a whole `TICK` later, half of one on
+        average. A tick costs about 5 ms at 100 sessions (`tests/scale.py`),
+        and a look a `stat` a file, so a quiet daemon does no more work."""
+        until = time.monotonic() + TICK
+        seen = self.news()
+        while not self.stopping.wait(LOOK_EVERY):
+            if time.monotonic() >= until or self.news() != seen:
+                return
+
+    def news(self) -> tuple[tuple[int, int] | None, ...]:
+        """The size and the moment of each file a tick reads news from: the
+        event log, and the transcript of each session a browser shows."""
+        watched = self.hub.watchers()
+        with self.reading:
+            paths = [reader.tail.path for session_id, reader in self.transcripts.items()
+                     if session_id in watched]
+        stamps: list[tuple[int, int] | None] = []
+        for path in [events_path(), *paths]:
+            try:
+                info = path.stat()
+            except OSError:
+                stamps.append(None)
+                continue
+            stamps.append((info.st_size, info.st_mtime_ns))
+        return tuple(stamps)
 
 
 # --- who connects: the uid behind a socket on localhost [topics/safety]
