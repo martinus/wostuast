@@ -1050,8 +1050,8 @@ def test_the_tool_results_kept_in_context_link_to_their_calls(page_at):
     """The reader asked to find the tool outputs that stay in context: each
     later reply reads a result again. The card names the costliest, with
     the tokens times the replies that read them, a bar, and what all of
-    them cost; a line is a link to its call, by its place, since the calls
-    of one reply share their moment."""
+    them cost; a line is a link to its call, by its id: the calls of one
+    reply share their moment, and the moment found the first."""
     daemon, path = page_at
 
     def call(target, mid, tool_id, **used):
@@ -1087,10 +1087,69 @@ def test_the_tool_results_kept_in_context_link_to_their_calls(page_at):
         # 10k tokens read at a tenth, of m1's 1,500 and m2's 1,160.
         assert "All results together cost 38% of what this session spent." \
             in card.inner_text()
-        card.locator(".sumline", has_text="cat small").click()
+        # The second call of its reply.
+        card.locator(".sumline", has_text="cat big").click()
         page.wait_for_function("state.tab === 'transcript'")
         page.wait_for_function("""() => [...document.querySelectorAll('#content .linked')]
-          .some((one) => one.textContent.includes('cat small'))""")
+          .some((one) => one.textContent.includes('cat big'))""")
+
+
+def test_the_month_s_tool_results_kept_in_context_and_by_tool(pair_at):
+    """The reader asked for the month what the session's list says: the
+    tool results that cost the most while they stayed in context, of all
+    sessions kept, then what they cost by tool. A line goes to its call in
+    its session's transcript, by its id; one the page no longer has is
+    named, not linked."""
+    daemon, path = pair_at
+    write_records(daemon, conftest.record("you", "Look around."),
+                  conftest.record("tool", "cat small", tool_id="c1"),
+                  conftest.record("tool", "cat big", tool_id="c2"),
+                  conftest.record("result", "s", tool_id="c1"),
+                  conftest.record("result", "b", tool_id="c2"),
+                  # Turns after it, so the tab's own landing, at the foot,
+                  # shows the call nowhere: only the link can.
+                  *[conftest.record(*one) for at in range(30) for one in (
+                      ("you", f"Next step {at}."), ("claude", "Done.\n\n" * 6))])
+    daemon.store.refresh()
+    month = {"today": "2026-11-03", "length": 30, "days": [1.0, 2.0, 3.0],
+             "since": "2026-11-01", "sessions": [], "turns": [],
+             "carried": {"usd": 1.5, "results": [
+                 {"id": "s1", "name": "", "call": "c2", "ts": 1.0, "tool": "Bash",
+                  "what": "cat big", "usd": 1.2, "tokens": 9000, "replies": 40, "day": 2},
+                 {"id": "gone", "name": "Port the map", "call": "x", "ts": 1.0,
+                  "tool": "Read", "what": "map.c", "usd": 0.3, "tokens": 2000,
+                  "replies": 12, "day": 3}],
+                 "tools": [{"tool": "Bash", "usd": 1.2, "calls": 1, "tokens": 9000},
+                           {"tool": "Read", "usd": 0.3, "calls": 3, "tokens": 2000}]}}
+    with opened(path) as page:
+        page.route("**/api/spend", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(month)))
+        page.wait_for_function("state.sessions.length === 2")
+        mine = page.evaluate("(id) => rowName(state.sessions.find((s) => s.id === id))", "s1")
+        page.evaluate("choose('s2')")
+        page.keyboard.press("4")
+        page.evaluate("loadSpend()")
+        card = page.locator(".sumpart.month .sumcard.wide", has_text="tool results kept")
+        card.locator(".sumline >> nth=1").wait_for()
+        lines = [[line.locator(".sumnum").inner_text(), line.locator(".sumsaid").inner_text(),
+                  line.is_disabled()] for line in card.locator(".sumline").all()]
+        assert lines == [
+            ["\u2248$1.20", mine + " \u00b7 9k \u00d7 40 \u00b7 Bash \u00b7 cat big", False],
+            ["\u2248$0.30", "Port the map \u00b7 2k \u00d7 12 \u00b7 Read \u00b7 map.c", True]]
+        # Of the $6.00 the month's days spent.
+        assert "cost \u2248$1.50, 25% of what was spent." in card.inner_text()
+        tools = page.locator(".sumpart.month .sumcard", has_text="kept in context, by tool")
+        assert tools.locator(".sumsaid").all_inner_texts() == [
+            "Bash \u00b7 1 call \u00b7 9k tokens", "Read \u00b7 3 calls \u00b7 2k tokens"]
+        assert tools.locator(".sumbar").last.evaluate("(one) => one.style.width") == "25%"
+        # Its day on the charts, on a hover.
+        card.locator(".sumline").first.hover()
+        page.wait_for_selector(".spendmark .spendband", state="attached")
+        # The second call of its reply, in its own session.
+        card.locator(".sumline").first.click()
+        page.wait_for_function("state.chosen === 's1' && state.tab === 'transcript'")
+        page.wait_for_function("""() => [...document.querySelectorAll('#content .linked')]
+          .some((one) => one.textContent.includes('cat big'))""")
 
 
 def test_the_month_s_charts_show_the_weekdays_and_the_workdays_left(page_at):

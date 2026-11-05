@@ -469,6 +469,12 @@ see on the charts the days it spent. Click a session to see its own
 statistics. Click a turn to read it in its transcript. The turns come only
 from the sessions that wostuast still keeps.
 
+Then the tool results of the month that cost the most while they stayed in
+context, as for one session, with the name of each session. Click one to
+read the call in its session's transcript. Under them, what all those
+results cost by tool: there you see a habit, for example the same files
+read at the start of every session.
+
 Each status line keeps what its session spent, a day at a time, from the
 day you installed this version. A day's spend is how much each session's
 total grew that day. Without wostuast's status line, nothing is kept.

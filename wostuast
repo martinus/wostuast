@@ -4858,6 +4858,14 @@ CONTEXT_KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input
 #: about 72k, the start of a session; between them, a context only grew.
 CONTEXT_FELL = 0.8
 
+#: The id of each call a line of results answers, read without parsing it.
+TOOL_USE_IDS = re.compile(rb'"tool_use_id"\s*:\s*"([^"\\]+)"')
+
+#: Bytes of a transcript line a character of its result, for the lines
+#: `CostReader` does not parse. Measured on 1,061 lines of results of 2,000
+#: characters or more: 2.26 to 2.59, half of them; 2.41 the median.
+RAW_PER_CHAR = 2.4
+
 
 @dataclass
 class ResultCost:
@@ -4866,10 +4874,11 @@ class ResultCost:
     again. Its tokens are its part of how much the next reply's context
     grew; it costs a part of each later reply until a compaction."""
 
-    seq: int = -1           # the call's block, for a link to it
+    call: str = ""          # its `tool_use_id`, for a link to the call
     ts: float = 0.0
     tool: str = ""
     what: str = ""          # the call's target, as its line shows it
+    given: Any = None       # the call's input, its target not read yet: `target`
     chars: int = 0
     tokens: float = 0.0
     since: float = 0.0      # `Carry.read_sum` when it came in
@@ -4877,6 +4886,14 @@ class ResultCost:
     weight: float = 0.0     # what it cost, once it left the context
     replies: int = 0
     gone: bool = False
+
+    def target(self) -> str:
+        """Its target, read the first time it is asked for, for the few the
+        page shows. Most hide their secrets first (`clip_hidden`): read for
+        every call, that made a month's reader half as slow again."""
+        if self.given is not None:
+            self.what, self.given = tool_target(self.tool, self.given), None
+        return self.what
 
 
 @dataclass
@@ -4892,6 +4909,7 @@ class Carry:
     result is two numbers, not a walk over every reply."""
 
     results: list[ResultCost] = field(default_factory=list)
+    calls: dict[str, ResultCost] = field(default_factory=dict)   # not answered yet
     waiting: list[ResultCost] = field(default_factory=list)
     other: int = 0          # characters of words that came in beside them
     live: list[ResultCost] = field(default_factory=list)
@@ -4900,7 +4918,27 @@ class Carry:
     last_context: int = 0
     last_out: int = 0
 
-    def arrived(self, record: dict[str, Any], blocks: list["Block"]) -> None:
+    def called(self, record: dict[str, Any], blocks: list["Block"]) -> None:
+        """A reply's calls, kept until their results come. Its target is
+        its block's, where the whole reader made one; `CostReader` makes
+        none, and reads it with the same `tool_target`."""
+        message = record.get("message")
+        made = {block.tool_use_id: block for block in blocks if block.tool_use_id}
+        for part in (message.get("content") if isinstance(message, dict) else None) or []:
+            if not isinstance(part, dict) or part.get("type") != "tool_use":
+                continue
+            call, tool = str(part.get("id") or ""), str(part.get("name") or "?")
+            block, given = made.get(call), part.get("input")
+            one = self.calls[call] = ResultCost(
+                call=call, ts=parse_timestamp(record.get("timestamp")), tool=tool)
+            if block is not None:
+                one.what = block.target
+            elif tool in PATCHED_TOOLS | COUNTED_TOOLS:
+                one.what = tool_target(tool, given)   # a path: the text it writes is not kept
+            else:
+                one.given = given
+
+    def arrived(self, record: dict[str, Any]) -> None:
         """A `user` record: the results it brings wait for the next reply,
         which says how much they took."""
         message = record.get("message")
@@ -4908,7 +4946,6 @@ class Carry:
         if isinstance(content, str):
             self.other += len(content)
             return
-        calls = {block.tool_use_id: block for block in blocks if block.tool_use_id}
         for piece in content if isinstance(content, list) else []:
             if not isinstance(piece, dict):
                 continue
@@ -4916,14 +4953,25 @@ class Carry:
             if kind == "text":
                 self.other += len(str(piece.get("text") or ""))
             elif kind == "tool_result":
-                block = calls.get(str(piece.get("tool_use_id") or ""))
-                if block is None:
-                    # A call this reader did not see, or `CostReader`,
-                    # which makes no block of a call: words, not a result.
-                    self.other += len(result_text(piece.get("content")))
+                said = len(result_text(piece.get("content")))
+                one = self.calls.pop(str(piece.get("tool_use_id") or ""), None)
+                if one is None:
+                    self.other += said      # a call this reader did not see
                     continue
-                self.waiting.append(ResultCost(seq=block.seq, ts=block.ts, tool=block.tool,
-                                               what=block.target, chars=len(block.result)))
+                one.chars = said
+                self.waiting.append(one)
+
+    def arrived_unread(self, line: bytes) -> None:
+        """A line of results `CostReader` does not parse (`may_cost`): each
+        result it answers, by its id, at its part of the line's length.
+        A line holds its result twice, in `content` and `toolUseResult`,
+        and escaped: `RAW_PER_CHAR` bytes a character, measured."""
+        answered = TOOL_USE_IDS.findall(line)
+        for call in answered:
+            one = self.calls.pop(call.decode("utf-8", "replace"), None)
+            if one is not None:
+                one.chars = int(len(line) / len(answered) / RAW_PER_CHAR)
+                self.waiting.append(one)
 
     def read(self, used: dict[str, Any]) -> None:
         """One reply, counted once: what it read, and what came in before it."""
@@ -4988,9 +5036,10 @@ class Costs:
         if kind == "system" and record.get("subtype") == "compact_boundary":
             self.carry.forget()
         if kind == "user":
-            self.carry.arrived(record, blocks)
+            self.carry.arrived(record)
         if kind != "assistant":
             return
+        self.carry.called(record, blocks)
         message = record.get("message")
         if not isinstance(message, dict):
             return
@@ -5062,6 +5111,7 @@ class CostReader:
                 begun = True
                 self.start_over()
             if not may_cost(line):
+                self.reader.costs.carry.arrived_unread(line)
                 continue
             for record in json_objects([line]):
                 kept = self.reader
@@ -10349,7 +10399,7 @@ def carried_json(carry: Carry, cost: float | None, total: float) -> dict[str, An
     weighed = [(one, *carry.weighed(one)) for one in carry.results]
     worst = sorted(weighed, key=lambda each: -each[1])[:COSTLY_SHOWN]
     return {"share": round(sum(each[1] for each in weighed) / total, 4) if total else 0.0,
-            "results": [{"seq": one.seq, "ts": one.ts, "tool": one.tool, "what": one.what,
+            "results": [{"call": one.call, "ts": one.ts, "tool": one.tool, "what": one.target(),
                          "tokens": round(one.tokens), "replies": replies,
                          "weight": round(weight, 1), "kept": not one.gone,
                          "usd": turn_share(cost, weight, total)}
@@ -10488,6 +10538,43 @@ def month_costly_json(now: float, statuses: dict[str, Status],
     return {"sessions": sorted((one for one in sessions if one["usd"] > 0),
                                key=lambda one: -one["usd"])[:COSTLY_SHOWN],
             "turns": sorted(turns, key=lambda one: -one["usd"])[:COSTLY_SHOWN]}
+
+
+def month_carried_json(now: float, statuses: dict[str, Status],
+                       costs: dict[str, Costs]) -> dict[str, Any]:
+    """The tool results of this calendar month that cost the most while
+    they stayed in context, of all sessions the daemon keeps, and what
+    they cost by tool, as the reader asked. Each is its share of its
+    session's whole total (`turn_share`), as a turn's is; a result is
+    this month's when its call is."""
+    month = local_day(now)[:8]
+    results, tools = [], {}
+    for session_id, held in costs.items():
+        status = statuses.get(session_id, Status())
+        total = sum(turn.weight for turn in held.turns)
+        for one in held.carry.results:
+            weight, replies = held.carry.weighed(one)
+            usd = turn_share(status.cost_usd, weight, total)
+            if not usd or not local_day(one.ts).startswith(month):
+                continue
+            results.append({"id": session_id, "name": status.name, "call": one,
+                            "ts": one.ts, "tool": one.tool, "usd": usd,
+                            "tokens": round(one.tokens), "replies": replies,
+                            "day": int(local_day(one.ts)[8:])})
+            sum_up = tools.setdefault(one.tool, {"tool": one.tool, "usd": 0.0, "calls": 0,
+                                                 "tokens": 0})
+            sum_up["usd"] += usd
+            sum_up["calls"] += 1
+            sum_up["tokens"] += round(one.tokens)
+    for sum_up in tools.values():
+        sum_up["usd"] = round(sum_up["usd"], 4)
+    worst = sorted(results, key=lambda one: -one["usd"])[:COSTLY_SHOWN]
+    for shown in worst:
+        made = shown["call"]
+        shown.update(call=made.call, what=made.target())
+    return {"usd": round(sum(one["usd"] for one in results), 4),
+            "results": worst,
+            "tools": sorted(tools.values(), key=lambda one: (-one["usd"], one["tool"]))}
 
 
 def session_json(session: Session) -> dict[str, Any]:
@@ -10897,8 +10984,11 @@ class Daemon:
         (#698). Under the one lock, as a reader's counts grow as it reads."""
         with self.spend_lock:
             statuses = self.spend_statuses()
+            costs = self.month_costs(now, statuses)
             return {**spend_json(now, [status.days for status in statuses.values()]),
-                    **month_costly_json(now, statuses, self.month_costs(now, statuses))}
+                    **month_costly_json(now, statuses, costs),
+                    # The tool results kept in context, and by tool.
+                    "carried": month_carried_json(now, statuses, costs)}
 
     def spend_statuses(self) -> dict[str, Status]:
         """Each status file, by its session's id, read again only when the
@@ -22560,6 +22650,16 @@ function landOnBlock(box) {
     state.turns.goToTs = null;
     if (state.turns.goTo === null) return false;
   }
+  // A tool result kept in context names its call: the calls of one reply
+  // share their moment, and the moment found the first of them.
+  if (state.turns.goToCall) {
+    const blocks = state.turns.blocks;
+    const at = blocks.findIndex((one) => one && one.tool_use_id === state.turns.goToCall);
+    if (at < 0 && !state.turns.whole) return false;   // not all here yet
+    state.turns.goTo = at < 0 ? null : at;
+    state.turns.goToCall = null;
+    if (state.turns.goTo === null) return false;
+  }
   const node = (box.nodes || [])[state.turns.goTo];
   if (!node || node.parentNode !== box) return false;
   if (node.hidden) {
@@ -24884,6 +24984,7 @@ function blankTurns() {
     goTo: null,         // a block a link asked for, until it is on screen
     goToTs: null,       // and its moment, for a saved turn (#377)
     goToNear: null,     // or about when, for a search result (#379)
+    goToCall: null,     // or its call's id, for a tool result kept in context
     at: null,           // the block the list marks: the last place you went
     down: null,         // how far down the transcript you were; null is none
     early: null,        // pushes that land while a fetch is on its way
@@ -28016,6 +28117,7 @@ function putSpend(pane, spend, allowance) {
   const cards = put(pane, "div", "sumcards");
   putMonthSessions(cards, spend.sessions || [], charts);
   putMonthTurns(cards, spend.turns || [], charts);
+  putMonthCarried(cards, spend.carried, charts, spent);
 }
 
 // The sessions that spent the most this month (#698), as the reader asked:
@@ -28066,8 +28168,7 @@ function putMonthTurns(pane, turns, charts) {
       + roughly((t.input_tokens || 0) + (t.cache_creation_input_tokens || 0)
                 + (t.cache_read_input_tokens || 0)) + " in";
     line.title = words;
-    markSpend(line, charts, Array.from({ length: one.day || 0 },
-                                       (_, at) => (at + 1 === one.day ? one.usd : 0)));
+    markSpend(line, charts, dayMarks(one.day, one.usd));
     if (!s) { line.disabled = true; continue; }
     line.title = words + ": show this turn in the transcript";
     line.addEventListener("click", () => {
@@ -28078,6 +28179,61 @@ function putMonthTurns(pane, turns, charts) {
       state.turns.goToTs = one.ts;
       showTab("transcript");
     });
+  }
+}
+
+// One day's amount, as `markSpend` takes a line's days: nought before it.
+function dayMarks(day, usd) {
+  return Array.from({ length: day || 0 }, (_, at) => (at + 1 === day ? usd : 0));
+}
+
+// The month's tool results that cost the most while they stayed in
+// context, of all the sessions kept here, as the reader asked; then what
+// they cost by tool. A line marks its day on the charts, and goes to its
+// call by its id (`goToCall`).
+function putMonthCarried(pane, carried, charts, spent) {
+  if (!carried || !carried.results.length) return;
+  // The whole row of the grid, as the month's turns: a session's name and
+  // a command in half a card left a few letters of each.
+  const card = putSumCard(pane, "tool results kept in context");
+  card.classList.add("wide");
+  put(card, "p", "sumnote", "Every later reply reads a tool's result again, until a"
+      + " compaction or a /clear. Each line: its tokens \u00d7 the replies that read them,"
+      + " and \u2248 what that cost. All results together cost \u2248" + money(carried.usd)
+      + (spent ? ", " + Math.round(100 * carried.usd / spent) + "% of what was spent" : "")
+      + ". Only the sessions kept here are read.");
+  const list = put(card, "div", "sumlist");
+  const most = carried.results[0].usd || 1;
+  for (const one of carried.results) {
+    const s = state.sessions.find((x) => x.id === one.id);
+    const line = put(list, "button", "sumline turnlink");
+    put(line, "span", "sumnum", "\u2248" + money(one.usd));
+    putSumBar(line, one.usd / most);
+    const said = put(line, "span", "sumsaid");
+    put(said, "span", "sumwho", (s ? rowName(s) : one.name || one.id.slice(0, 8)) + " \u00b7 ");
+    said.append([roughly(one.tokens) + " \u00d7 " + one.replies, one.tool, one.what]
+      .filter(Boolean).join(" \u00b7 "));
+    const words = roughly(one.tokens) + " tokens, read by "
+      + counted(one.replies, "reply", "replies");
+    line.title = words;
+    markSpend(line, charts, dayMarks(one.day, one.usd));
+    if (!s) { line.disabled = true; continue; }
+    line.title = words + ": show this call in the transcript";
+    line.addEventListener("click", () => {
+      choose(one.id);
+      state.turns.goTo = 0;
+      state.turns.goToCall = one.call;
+      showTab("transcript");
+    });
+  }
+  const tools = put(putSumCard(pane, "kept in context, by tool"), "div", "sumlist");
+  const dearest = carried.tools[0].usd || 1;
+  for (const one of carried.tools) {
+    const line = put(tools, "div", "sumline");
+    put(line, "span", "sumnum", "\u2248" + money(one.usd));
+    putSumBar(line, one.usd / dearest);
+    put(line, "span", "sumsaid", [one.tool, counted(one.calls, "call", "calls"),
+                                  roughly(one.tokens) + " tokens"].join(" \u00b7 "));
   }
 }
 
@@ -28414,7 +28570,7 @@ function putCostly(pane, got) {
 // The tool results that cost the most while they stayed in context, as
 // the reader asked: every later reply reads a result again, so a big one
 // read early costs more than the call that made it. Each is a link to its
-// call. By its place alone: the calls of one reply share their moment.
+// call, by its id (`goToCall`).
 function putSumCarried(pane, got) {
   const carried = got.carried || { share: 0, results: [] };
   if (!carried.results.length) return;
@@ -28438,7 +28594,8 @@ function putSumCarried(pane, got) {
       + counted(one.replies, "reply", "replies") + (one.kept ? ", still in context" : "")
       + ": show this call in the transcript";
     line.addEventListener("click", () => {
-      state.turns.goTo = one.seq;
+      state.turns.goTo = 0;
+      state.turns.goToCall = one.call;
       showTab("transcript");
     });
   }
