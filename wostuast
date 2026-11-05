@@ -4848,6 +4848,123 @@ class TurnCost:
     replies: int = 0
 
 
+#: The kinds of token a reply reads its context as: the context's size is
+#: their sum, and what reading it cost is their sum by `TOKEN_WEIGHTS`.
+CONTEXT_KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+
+#: A reply whose context is this much smaller than the one before lost what
+#: that one held: a compaction, or a `/clear` that went on in the same file.
+#: Measured on 16 transcripts: each such fall went from 160k-590k tokens to
+#: about 72k, the start of a session; between them, a context only grew.
+CONTEXT_FELL = 0.8
+
+
+@dataclass
+class ResultCost:
+    """A tool's result by what it cost while it stayed in context, as the
+    reader asked: to find the calls whose output every later reply reads
+    again. Its tokens are its part of how much the next reply's context
+    grew; it costs a part of each later reply until a compaction."""
+
+    seq: int = -1           # the call's block, for a link to it
+    ts: float = 0.0
+    tool: str = ""
+    what: str = ""          # the call's target, as its line shows it
+    chars: int = 0
+    tokens: float = 0.0
+    since: float = 0.0      # `Carry.read_sum` when it came in
+    since_n: int = 0
+    weight: float = 0.0     # what it cost, once it left the context
+    replies: int = 0
+    gone: bool = False
+
+
+@dataclass
+class Carry:
+    """What each tool's result cost while it stayed in context.
+
+    A transcript says no result's tokens, but every reply says its whole
+    context. So a result is its share, by its characters, of how much the
+    next reply's context grew past the reply before it and that reply's
+    own output. Each later reply reads it again: it costs its part of that
+    reply's context, at the weights the reply read it at (a cache read a
+    tenth, a write 1.25). `read_sum` adds those up a reply at a time, so a
+    result is two numbers, not a walk over every reply."""
+
+    results: list[ResultCost] = field(default_factory=list)
+    waiting: list[ResultCost] = field(default_factory=list)
+    other: int = 0          # characters of words that came in beside them
+    live: list[ResultCost] = field(default_factory=list)
+    read_sum: float = 0.0
+    read_n: int = 0
+    last_context: int = 0
+    last_out: int = 0
+
+    def arrived(self, record: dict[str, Any], blocks: list["Block"]) -> None:
+        """A `user` record: the results it brings wait for the next reply,
+        which says how much they took."""
+        message = record.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, str):
+            self.other += len(content)
+            return
+        calls = {block.tool_use_id: block for block in blocks if block.tool_use_id}
+        for piece in content if isinstance(content, list) else []:
+            if not isinstance(piece, dict):
+                continue
+            kind = piece.get("type")
+            if kind == "text":
+                self.other += len(str(piece.get("text") or ""))
+            elif kind == "tool_result":
+                block = calls.get(str(piece.get("tool_use_id") or ""))
+                if block is None:
+                    # A call this reader did not see, or `CostReader`,
+                    # which makes no block of a call: words, not a result.
+                    self.other += len(result_text(piece.get("content")))
+                    continue
+                self.waiting.append(ResultCost(seq=block.seq, ts=block.ts, tool=block.tool,
+                                               what=block.target, chars=len(block.result)))
+
+    def read(self, used: dict[str, Any]) -> None:
+        """One reply, counted once: what it read, and what came in before it."""
+        context = sum(count for key in CONTEXT_KEYS
+                      if isinstance(count := used.get(key), int) and count > 0)
+        if not context:
+            return
+        if context < self.last_context * CONTEXT_FELL:
+            self.forget()
+        if self.last_context:
+            grew = max(0, context - self.last_context - self.last_out)
+            chars = self.other + sum(one.chars for one in self.waiting)
+            for one in self.waiting:
+                one.tokens = grew * one.chars / chars if chars else 0.0
+                if one.tokens:
+                    one.since, one.since_n = self.read_sum, self.read_n
+                    self.live.append(one)
+                    self.results.append(one)
+        self.waiting, self.other = [], 0
+        self.read_sum += sum(TOKEN_WEIGHTS[key] * count for key in CONTEXT_KEYS
+                             if isinstance(count := used.get(key), int) and count > 0) / context
+        self.read_n += 1
+        out = used.get("output_tokens")
+        self.last_context, self.last_out = context, out if isinstance(out, int) else 0
+
+    def forget(self) -> None:
+        """The context is gone: what it held costs nothing more."""
+        for one in self.live:
+            one.weight, one.replies = self.weighed(one)
+            one.gone = True
+        self.live, self.waiting, self.other = [], [], 0
+        self.last_context = self.last_out = 0
+
+    def weighed(self, one: ResultCost) -> tuple[float, int]:
+        """What a result cost, and how many replies read it: so far, while
+        it is still in context."""
+        if one.gone:
+            return one.weight, one.replies
+        return one.tokens * (self.read_sum - one.since), self.read_n - one.since_n
+
+
 @dataclass
 class Costs:
     """Where a transcript's tokens went (#622), kept as the reader reads.
@@ -4859,6 +4976,7 @@ class Costs:
     turns: list[TurnCost] = field(default_factory=list)
     tools: dict[str, int] = field(default_factory=dict)
     seen: set[str] = field(default_factory=set)
+    carry: Carry = field(default_factory=Carry)
 
     def take(self, record: dict[str, Any], blocks: list["Block"]) -> None:
         """One record of the transcript, and the blocks it made."""
@@ -4866,7 +4984,12 @@ class Costs:
             if block.kind == "prompt":
                 self.turns.append(TurnCost(seq=block.seq, said=clip(block.text, 120),
                                            ts=block.ts))
-        if record.get("type") != "assistant":
+        kind = record.get("type")
+        if kind == "system" and record.get("subtype") == "compact_boundary":
+            self.carry.forget()
+        if kind == "user":
+            self.carry.arrived(record, blocks)
+        if kind != "assistant":
             return
         message = record.get("message")
         if not isinstance(message, dict):
@@ -4879,6 +5002,7 @@ class Costs:
         if not mid or mid in self.seen or not isinstance(used, dict):
             return
         self.seen.add(mid)
+        self.carry.read(used)
         if not self.turns:
             self.turns.append(TurnCost(said="(before the first prompt)"))
         turn = self.turns[-1]
@@ -10218,6 +10342,20 @@ def agent_transcript_json(agent: str, one: Subagent,
             "running": not one.ended, "blocks": blocks_json(blocks)}
 
 
+def carried_json(carry: Carry, cost: float | None, total: float) -> dict[str, Any]:
+    """The tool results that cost the most while they stayed in context,
+    and what all of them cost, as a share of the session's turns. A
+    result's dollars are its share, as a turn's are (`turn_share`)."""
+    weighed = [(one, *carry.weighed(one)) for one in carry.results]
+    worst = sorted(weighed, key=lambda each: -each[1])[:COSTLY_SHOWN]
+    return {"share": round(sum(each[1] for each in weighed) / total, 4) if total else 0.0,
+            "results": [{"seq": one.seq, "ts": one.ts, "tool": one.tool, "what": one.what,
+                         "tokens": round(one.tokens), "replies": replies,
+                         "weight": round(weight, 1), "kept": not one.gone,
+                         "usd": turn_share(cost, weight, total)}
+                        for one, weight, replies in worst if weight]}
+
+
 def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
     """Where a session's tokens and time went, for the Summary tab (#622).
 
@@ -10260,6 +10398,8 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
                     "usd": turn_share(status.cost_usd, turn.weight, total),
                     "weight": round(turn.weight, 1)}
                    for turn in worst if turn.weight],
+        # The tool results that cost the most while they stayed in context.
+        "carried": carried_json(costs.carry, status.cost_usd, total),
         "subagents": sorted(kinds.values(), key=lambda one: -one["tokens"]),
         # Subagents run before #618 counted no calls; `agents_ran` counts all.
         "agents_ran": session.agents_ran,
@@ -27795,6 +27935,7 @@ function drawSummary(box) {
     putSumHead(mine, got);
     const cards = put(mine, "div", "sumcards");
     putCostly(cards, got);
+    putSumCarried(cards, got);
     putSumTime(cards, got);
     putSumAgents(cards, got);
     putSumTools(cards, got);
@@ -28265,6 +28406,39 @@ function putCostly(pane, got) {
     line.addEventListener("click", () => {
       state.turns.goTo = one.seq;
       state.turns.goToTs = one.ts;
+      showTab("transcript");
+    });
+  }
+}
+
+// The tool results that cost the most while they stayed in context, as
+// the reader asked: every later reply reads a result again, so a big one
+// read early costs more than the call that made it. Each is a link to its
+// call. By its place alone: the calls of one reply share their moment.
+function putSumCarried(pane, got) {
+  const carried = got.carried || { share: 0, results: [] };
+  if (!carried.results.length) return;
+  // The whole row of the grid: a call's command is a line, and half a
+  // card cut it to its first words.
+  const card = putSumCard(pane, "tool results kept in context");
+  card.classList.add("wide");
+  put(card, "p", "sumnote", "Every later reply reads a tool's result again, until a"
+      + " compaction or a /clear. Each line: its tokens \u00d7 the replies that read them,"
+      + " and \u2248 what that cost. All results together cost "
+      + Math.round(100 * carried.share) + "% of what this session spent.");
+  const list = put(card, "div", "sumlist");
+  const most = carried.results[0].weight || 1;
+  for (const one of carried.results) {
+    const line = put(list, "button", "sumline turnlink");
+    put(line, "span", "sumnum", one.usd === null ? "" : "\u2248" + money(one.usd));
+    putSumBar(line, one.weight / most);
+    put(line, "span", "sumsaid", [roughly(one.tokens) + " \u00d7 " + one.replies, one.tool,
+                                  one.what].filter(Boolean).join(" \u00b7 "));
+    line.title = roughly(one.tokens) + " tokens, read by "
+      + counted(one.replies, "reply", "replies") + (one.kept ? ", still in context" : "")
+      + ": show this call in the transcript";
+    line.addEventListener("click", () => {
+      state.turns.goTo = one.seq;
       showTab("transcript");
     });
   }

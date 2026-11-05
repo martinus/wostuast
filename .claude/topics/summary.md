@@ -80,6 +80,28 @@ can optimize my future sessions to produce less churn".
   push draws no tab, so a redraw key for the row's subagents did nothing.
   `test_each_subagent_is_a_line_that_opens_its_transcript`,
   `test_the_subagents_list_says_when_it_keeps_fewer_than_ran`.
+- **A tool's result costs a part of every later reply that reads it,
+  until the context goes** (`Carry`, `ResultCost`, `carried_json`,
+  `putSumCarried`), as the reader asked: to find the calls whose output
+  stays in context, and make them smaller. A transcript says no result's
+  tokens, but each reply says its whole context (`CONTEXT_KEYS`). So a
+  result is its share, by characters, of how much the next reply's context
+  grew past the reply before and that reply's own output: without the
+  output, a `Write`'s content was its small result's. Each later reply
+  costs it its part of that reply's context, at the weights the reply read
+  it at, so a cache miss counts at 1.25. `read_sum` adds them up a reply
+  at a time: a walk over each result still in context, at every reply, is
+  replies times results. **The context goes at a compaction, and when a reply's
+  context falls below `CONTEXT_FELL` of the one before**: a `/clear` can go
+  on in the same file, with no record to say so. Measured on 16
+  transcripts: tool results were 29 to 40 % of what a session spent, and
+  the costliest were rule files read at the start. The list goes to a call
+  by its place alone (`goTo`), never by its moment: the calls of one reply
+  share theirs, and `goToTs` found the first. Its card spans the row, as a
+  command is a line. **Only the session's own section has it**:
+  `CostReader` makes no block of a call, so its results count as words.
+  `test_a_tool_result_costs_each_later_reply_until_the_context_goes`,
+  `test_the_tool_results_kept_in_context_link_to_their_calls`.
 - **Every list of the tab has a bar a line, drawn one way, `putSumBar`**
   (#685): time by tool, calls by tool, the costliest turns and the
   slowest calls, each as long as its share of the most in its list. A

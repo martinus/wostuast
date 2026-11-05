@@ -1046,6 +1046,53 @@ def test_the_costliest_turns_and_the_slowest_calls_have_bars(ws, page_at):
                                              ["10%", "Bash \u00b7 make g2"]], slow
 
 
+def test_the_tool_results_kept_in_context_link_to_their_calls(page_at):
+    """The reader asked to find the tool outputs that stay in context: each
+    later reply reads a result again. The card names the costliest, with
+    the tokens times the replies that read them, a bar, and what all of
+    them cost; a line is a link to its call, by its place, since the calls
+    of one reply share their moment."""
+    daemon, path = page_at
+
+    def call(target, mid, tool_id, **used):
+        made = conftest.record("tool", target, tool_id=tool_id)
+        made["message"].update(id=mid, usage=used)
+        return made
+
+    write_records(daemon, conftest.record("you", "Look around."),
+                  call("cat small", "m1", "c1", input_tokens=1000, output_tokens=100),
+                  call("cat big", "m1", "c2", input_tokens=1000, output_tokens=100),
+                  conftest.record("result", "s" * 100, tool_id="c1"),
+                  conftest.record("result", "b" * 900, tool_id="c2"),
+                  call("ls", "m2", "c3", cache_read_input_tokens=11_100, output_tokens=10),
+                  conftest.record("result", "ok", tool_id="c3"),
+                  # Turns after it, so the tab's own landing, at the foot,
+                  # shows the call nowhere: only the link can.
+                  *[conftest.record(*one) for at in range(30) for one in (
+                      ("you", f"Next step {at}."), ("claude", "Done.\n\n" * 6))])
+    daemon.store.refresh()
+    with opened(path) as page:
+        wait_for_map(page)
+        page.keyboard.press("4")
+        card = page.locator(".sumcard.wide", has_text="tool results kept in context")
+        card.locator(".sumline").first.wait_for()
+        lines = card.locator(".sumline").all_inner_texts()
+        # m1's 100 out and 10,000 more: nine tenths are the big one's.
+        assert "9k \u00d7 1 \u00b7 Bash \u00b7 cat big" in lines[0], lines
+        assert "1k \u00d7 1 \u00b7 Bash \u00b7 cat small" in lines[1], lines
+        assert card.locator(".sumbar").first.evaluate("(one) => one.style.width") == "100%"
+        title = card.locator(".sumline").first.get_attribute("title")
+        assert title == "9k tokens, read by 1 reply, still in context:" \
+                        " show this call in the transcript", title
+        # 10k tokens read at a tenth, of m1's 1,500 and m2's 1,160.
+        assert "All results together cost 38% of what this session spent." \
+            in card.inner_text()
+        card.locator(".sumline", has_text="cat small").click()
+        page.wait_for_function("state.tab === 'transcript'")
+        page.wait_for_function("""() => [...document.querySelectorAll('#content .linked')]
+          .some((one) => one.textContent.includes('cat small'))""")
+
+
 def test_the_month_s_charts_show_the_weekdays_and_the_workdays_left(page_at):
     """The days said only 1, 8, 15 (#684): the reader could not see how many
     working days the month had left. Each day has its weekday's letter, a

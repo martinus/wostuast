@@ -37,7 +37,8 @@ hand (#621); `--commit 6` is the merge. `--elsewhere` is a second
 repository, `api`, with one commit and one change, that the agent edited a
 file in: the picker beside the tabs names it (#616). Beside it, `notes`, a
 folder git knows nothing of, for the reader to add (#624). `--summary` gives
-the session four turns that used something, their times, an Explore
+the session four turns that used something, a reply a call with its
+result in the context, their times, an Explore
 subagent and a status line that says what it cost, for the Statistics tab
 (#622), and a month of what three more sessions spent, for all of them
 (#653). `--fresh` is a session that has only started: no prompt yet, so
@@ -182,18 +183,15 @@ def make_elsewhere(api: Path) -> None:
     (notes / "meetings" / "monday.md").write_text("# Monday\n\nThe ring is full too often.\n")
 
 
-#: The turns `--summary` writes (#622): each prompt, its calls, and what its
-#: one reply used, as Claude Code writes `usage`.
+#: The turns `--summary` writes (#622): each prompt, and its calls with
+#: how many characters each one's result brought into the context.
 SPENT = [
-    ("Find where the ring is defined.", ["Grep", "Read"],
-     dict(input_tokens=30, cache_read_input_tokens=180_000, output_tokens=2_400)),
-    ("Refactor the parser to use the ring.", ["Read", "Read", "Edit", "Edit", "Bash"],
-     dict(input_tokens=90, cache_creation_input_tokens=60_000,
-          cache_read_input_tokens=1_900_000, output_tokens=41_000)),
-    ("Run the tests and fix what fails.", ["Bash", "Bash", "Edit", "Bash"],
-     dict(input_tokens=60, cache_read_input_tokens=1_200_000, output_tokens=18_000)),
-    ("Write the changelog.", ["Read", "Edit"],
-     dict(input_tokens=12, cache_read_input_tokens=300_000, output_tokens=3_100)),
+    ("Find where the ring is defined.", [("Grep", 1_800), ("Read", 24_000)]),
+    ("Refactor the parser to use the ring.",
+     [("Read", 38_000), ("Read", 9_000), ("Edit", 400), ("Edit", 300), ("Bash", 52_000)]),
+    ("Run the tests and fix what fails.",
+     [("Bash", 14_000), ("Bash", 3_000), ("Edit", 300), ("Bash", 2_000)]),
+    ("Write the changelog.", [("Read", 6_000), ("Edit", 200)]),
 ]
 
 
@@ -207,29 +205,54 @@ TOOK = {
 }
 
 
+def spent_records(record) -> list[dict]:
+    """`SPENT` as Claude Code writes it: each call a reply of its own, and
+    each reply's context what came before it, grown by the reply before
+    and the results since, at about three characters a token. Each call
+    takes its tool's next target in `TOOK`, as its time does."""
+    made, context, new, used = [], 24_000, 40, dict.fromkeys(TOOK, 0)
+
+    def reply(one: dict, out: int) -> None:
+        nonlocal context, new
+        one["message"]["usage"] = dict(input_tokens=4, cache_creation_input_tokens=new,
+                                       cache_read_input_tokens=context, output_tokens=out)
+        context, new = context + new, out
+        made.append(one)
+
+    for at, (said, calls) in enumerate(SPENT):
+        made.append(record("you", said))
+        new += 40
+        for count, (tool, chars) in enumerate(calls):
+            what = next(iter(TOOK[tool][used[tool] % len(TOOK[tool])][0].values()))
+            used[tool] += 1
+            one = record("tool", what, tool=tool, tool_id=f"t{at}{count}")
+            one["message"]["id"] = f"m{at}{count}"
+            reply(one, 600)
+            made.append(record("result", "ring_step(r);\n" * (chars // 14),
+                               tool_id=f"t{at}{count}"))
+            new += chars // 3
+        done = record("claude", "Done.")
+        done["message"]["id"] = f"m{at}"
+        reply(done, 300)
+    return made
+
+
 def make_spending(ws, transcript: Path, repo: Path) -> None:
     """Four turns that used something, their times, an Explore subagent
     and a status line that says what it all cost (#622)."""
     from conftest import record, records
-    made = []
-    for at, (said, tools, used) in enumerate(SPENT):
-        made.append(record("you", said))
-        for count, tool in enumerate(tools):
-            one = record("tool", "src/ring.c", tool=tool, tool_id=f"t{at}{count}")
-            one["message"].update(id=f"m{at}", usage=used)
-            made += [one, record("result", "ok", tool_id=f"t{at}{count}")]
     with transcript.open("a") as handle:
-        handle.write(records(*made))
+        handle.write(records(*spent_records(record)))
     began = time.time() - 7_800
     base = {"session_id": "s1", "cwd": str(repo), "pane": "%7"}
     times = [(0, 300), (600, 1_900), (2_400, 3_500), (4_000, 4_200)]
     used = dict.fromkeys(TOOK, 0)
-    for turn, ((start, end), (said, tools, _)) in enumerate(zip(times, SPENT)):
+    for turn, ((start, end), (said, calls)) in enumerate(zip(times, SPENT)):
         ws.append_event({**base, "hook_event_name": "UserPromptSubmit", "prompt": said,
                          "ts": began + start})
         # Each call's own time, as its `PostToolUse` says it (#663); each
         # tool takes its next example in turn.
-        for count, tool in enumerate(tools):
+        for count, (tool, _) in enumerate(calls):
             what, took = TOOK[tool][used[tool] % len(TOOK[tool])]
             used[tool] += 1
             ws.append_event({**base, "hook_event_name": "PostToolUse", "tool_name": tool,
