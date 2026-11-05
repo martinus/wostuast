@@ -19,6 +19,7 @@ from browser import (
     wait_until,
     wait_for_watching,
     write_records,
+    watch_landings,
     hold,
     own_context,
     load,
@@ -1088,10 +1089,11 @@ def test_the_tool_results_kept_in_context_link_to_their_calls(page_at):
         assert "All results together cost 38% of what this session spent." \
             in card.inner_text()
         # The second call of its reply.
+        watch_landings(page)
         card.locator(".sumline", has_text="cat big").click()
-        page.wait_for_function("state.tab === 'transcript'")
-        page.wait_for_function("""() => [...document.querySelectorAll('#content .linked')]
-          .some((one) => one.textContent.includes('cat big'))""")
+        page.wait_for_function("window.landedOn.length > 0")
+        assert page.evaluate("state.tab") == "transcript"
+        assert "cat big" in page.evaluate("window.landedOn[0]")
 
 
 def test_the_month_s_tool_results_kept_in_context_and_by_tool(pair_at):
@@ -1146,10 +1148,11 @@ def test_the_month_s_tool_results_kept_in_context_and_by_tool(pair_at):
         card.locator(".sumline").first.hover()
         page.wait_for_selector(".spendmark .spendband", state="attached")
         # The second call of its reply, in its own session.
+        watch_landings(page)
         card.locator(".sumline").first.click()
-        page.wait_for_function("state.chosen === 's1' && state.tab === 'transcript'")
-        page.wait_for_function("""() => [...document.querySelectorAll('#content .linked')]
-          .some((one) => one.textContent.includes('cat big'))""")
+        page.wait_for_function("window.landedOn.length > 0")
+        assert page.evaluate("[state.chosen, state.tab]") == ["s1", "transcript"]
+        assert "cat big" in page.evaluate("window.landedOn[0]")
 
 
 def test_the_month_s_charts_show_the_weekdays_and_the_workdays_left(page_at):
@@ -1252,18 +1255,8 @@ def test_the_month_names_its_costliest_sessions_and_turns(pair_at):
         page.locator(".sumpart.month .sumcard", has_text="costliest sessions") \
             .locator(".sumline").first.click()
         page.wait_for_function("state.chosen === 's2' && state.tab === 'summary'")
-        # A turn: its place in its session's transcript. The mark of the
-        # block landed on stays 2.5 s, and a loaded runner read it after it
-        # had gone: an observer set before the click keeps what it marked.
-        page.evaluate("""() => {
-          window.landedOn = [];
-          new MutationObserver((changes) => changes.forEach((one) => {
-            if (one.target.classList && one.target.classList.contains('linked')) {
-              window.landedOn.push(one.target.textContent);
-            }
-          })).observe(document.getElementById('content'),
-                      { subtree: true, attributes: true, attributeFilter: ['class'] });
-        }""")
+        # A turn: its place in its session's transcript.
+        watch_landings(page)
         page.locator(".sumpart.month .sumcard", has_text="costliest turns") \
             .locator(".sumline").first.click()
         page.wait_for_function("window.landedOn.length > 0")
