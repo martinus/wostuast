@@ -248,7 +248,7 @@ where you left it: the tab, the open file, and your place in it.
 | **Transcript** | What the agent said and did, with a map of the conversation beside it. For a session that is over, the command that brings it back (`claude --resume`), to copy. |
 | **Files** | Every file in the worktree as a tree, with syntax colour and go-to-file. |
 | **Review** | What changed, file by file, with your comments on it and the bar to send them. |
-| **Statistics** | Where the session's tokens and time went: what it spent, how long it was busy, its costliest turns, its subagents and its calls by tool. Under it, what all sessions spent each day this month, and the way to your allowance. |
+| **Statistics** | Where the session's tokens and time went: what it spent, how long it was busy, its costliest turns, the tool results that stayed in context longest, its subagents and its calls by tool. Under it, what all sessions spent each day this month, and the way to your allowance. |
 
 When a switch to another session or tab takes a moment, for example over a
 slow ssh tunnel, the old content dims and a label says what is loading. The
@@ -437,7 +437,19 @@ it says how many tokens of each kind the session used.
 Then its costliest turns. A turn's share of what was spent is marked
 "≈": the status line says only the whole, so each turn gets its share by
 the tokens its replies used, output weighing most and a cache read least.
-Click a turn to read it in the transcript. Then the time by tool: how long
+Click a turn to read it in the transcript.
+
+Then the tool results kept in context. Each later reply reads a tool's
+result again, until a compaction or a `/clear`, so a large result read early
+in a session can cost more than the turn that asked for it. A line says the
+result's tokens, times the replies that read them, the tool and its target,
+and "≈" what that cost. The note above the list says what all results
+together cost, as a share of what the session spent. Point at a line to see
+whether the result is still in context. Click it to read the call in the
+transcript. Use the list to find the calls to make smaller: a narrower
+`grep`, a `sed -n` of the part you need, a `head` on a long log.
+
+Then the time by tool: how long
 each tool's calls ran, not the time a dialog waited for your answer. Then
 its slowest calls, of a second or more; click one to read it in the
 transcript. Then its subagents by kind, and then each subagent, the newest

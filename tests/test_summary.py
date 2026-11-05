@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from conftest import FIXTURES, event, record, records
 
 
@@ -301,3 +303,53 @@ def test_the_daemon_reads_the_month_s_turns_of_the_sessions_it_keeps(ws, transcr
     reader = daemon.cost_readers[path]
     daemon.spend(now)
     assert daemon.cost_readers[path] is reader
+
+
+def test_a_tool_result_costs_each_later_reply_until_the_context_goes(ws, tmp_path):
+    """A result's tokens are its share, by its characters, of how much the
+    next reply's context grew past the reply before and that reply's own
+    output; every later reply reads it again, at that reply's weights. A
+    compaction ends that, and so does a context that fell with no record
+    to say so: a `/clear` that went on in the same file."""
+    path = tmp_path / "s1.jsonl"
+    path.write_text(records(
+        record("you", "look around"),
+        reply(record("tool", "cat big", tool_id="t1"), "m1", input_tokens=1000,
+              output_tokens=100),
+        record("result", "x" * 300, tool_id="t1"),
+        # 1000 + 100 out + 600 for the result; half of it from the cache.
+        reply(record("tool", "cat small", tool_id="t2"), "m2", cache_read_input_tokens=1100,
+              cache_creation_input_tokens=600, output_tokens=50),
+        record("result", "y" * 200, tool_id="t2"),
+        # Words beside it, as Claude Code's own reminders come: half the 400.
+        record("meta", "n" * 200),
+        reply(record("claude", "read both"), "m3", cache_read_input_tokens=2150),
+        {"type": "system", "subtype": "compact_boundary",
+         "timestamp": "2026-09-18T14:00:00.000Z"},
+        # A compaction of a small context, that fell less than a fall.
+        reply(record("tool", "cat third", tool_id="t3"), "m4", input_tokens=1900),
+        record("result", "z" * 30, tool_id="t3"),
+        reply(record("claude", "after the compaction"), "m5", cache_read_input_tokens=2200),
+        reply(record("claude", "after a /clear"), "m6", cache_read_input_tokens=200),
+        reply(record("claude", "still after it"), "m7", cache_read_input_tokens=300)))
+    reader = ws.Transcript(str(path))
+    reader.read_new()
+    carry = reader.costs.carry
+    got = {one.what: (round(one.tokens), *carry.weighed(one)) for one in carry.results}
+    # m2 read 1700 tokens at (110 + 750) / 1700 a token, m3 at a tenth.
+    assert got["cat big"] == (600, pytest.approx(600 * (860 / 1700 + 0.1)), 2), \
+        "m2 and m3 read it, and no reply after the compaction"
+    assert got["cat small"] == (200, pytest.approx(20.0), 1)
+    # m5 read it; m6's context fell to a quarter, so m6 and m7 did not.
+    assert got["cat third"] == (300, pytest.approx(30.0), 1)
+    session = ws.Session(session_id="s1")
+    session.status.cost_usd = 3.0
+    sent = ws.summary_json(session, reader.costs)["carried"]
+    assert [one["what"] for one in sent["results"]] == ["cat big", "cat third", "cat small"]
+    total = sum(turn.weight for turn in reader.costs.turns)
+    big = sent["results"][0]
+    assert big["usd"] == ws.turn_share(3.0, 600 * (860 / 1700 + 0.1), total)
+    assert big["kept"] is False and big["replies"] == 2 and big["tokens"] == 600
+    assert sent["share"] == round((600 * (860 / 1700 + 0.1) + 20 + 30) / total, 4)
+    # The link goes to the call's block.
+    assert reader.blocks[big["seq"]].target == "cat big"
