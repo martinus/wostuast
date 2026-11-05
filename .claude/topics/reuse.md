@@ -81,7 +81,9 @@ records near a transcript's end, by a word in their line),
 - In `browser.py`: `opened` (`with opened(where) as page:`, `tab="diff"`),
   `own_context`, `load`, `show_tab`, `comment_on_first_line`, `two_rows`,
   `rgb`/`contrast`, `numbers`, `open_code`, `stays` (the one fixed wait:
-  proving nothing comes), `frames`, `pixels` and `spy_on_note`.
+  proving nothing comes), `frames`, `pixels`, `spy_on_note`, and
+  `watch_landings` (the block a link lands on: its mark stays 2.5 s, and a
+  loaded runner looked after it had gone).
 
 ## CSS
 

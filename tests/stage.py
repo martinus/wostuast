@@ -241,8 +241,11 @@ def make_spending(ws, transcript: Path, repo: Path) -> None:
     """Four turns that used something, their times, an Explore subagent
     and a status line that says what it all cost (#622)."""
     from conftest import record, records
+    # An hour ago, so its turns and its results are this month's (#698).
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 3_600))
     with transcript.open("a") as handle:
-        handle.write(records(*spent_records(record)))
+        handle.write(records(*spent_records(
+            lambda *said, **more: record(*said, ts=stamp, **more))))
     began = time.time() - 7_800
     base = {"session_id": "s1", "cwd": str(repo), "pane": "%7"}
     times = [(0, 300), (600, 1_900), (2_400, 3_500), (4_000, 4_200)]

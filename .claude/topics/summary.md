@@ -81,7 +81,7 @@ can optimize my future sessions to produce less churn".
   `test_each_subagent_is_a_line_that_opens_its_transcript`,
   `test_the_subagents_list_says_when_it_keeps_fewer_than_ran`.
 - **A tool's result costs a part of every later reply that reads it,
-  until the context goes** (`Carry`, `ResultCost`, `carried_json`,
+  until the context goes** (#699, `Carry`, `ResultCost`, `carried_json`,
   `putSumCarried`), as the reader asked: to find the calls whose output
   stays in context, and make them smaller. A transcript says no result's
   tokens, but each reply says its whole context (`CONTEXT_KEYS`). So a
@@ -95,13 +95,30 @@ can optimize my future sessions to produce less churn".
   context falls below `CONTEXT_FELL` of the one before**: a `/clear` can go
   on in the same file, with no record to say so. Measured on 16
   transcripts: tool results were 29 to 40 % of what a session spent, and
-  the costliest were rule files read at the start. The list goes to a call
-  by its place alone (`goTo`), never by its moment: the calls of one reply
+  the costliest were rule files read at the start. **A list goes to a call
+  by its id** (`goToCall`), never by its moment: the calls of one reply
   share theirs, and `goToTs` found the first. Its card spans the row, as a
-  command is a line. **Only the session's own section has it**:
-  `CostReader` makes no block of a call, so its results count as words.
+  command is a line.
   `test_a_tool_result_costs_each_later_reply_until_the_context_goes`,
   `test_the_tool_results_kept_in_context_link_to_their_calls`.
+  - **The month has the list too, and what the results cost by tool**
+    (`month_carried_json`, `putMonthCarried`), as the reader asked. A
+    result is this month's when its call is, and its dollars are its share
+    of its session's whole total, as a turn's are (`turn_share`). **The
+    calls are the `Carry`'s own, from the replies** (`Carry.called`):
+    `CostReader` makes no block of a call. **A line of results it does not
+    parse gives its ids and its length from the bytes** (`arrived_unread`,
+    `TOOL_USE_IDS`, `RAW_PER_CHAR`): parsing them was what made the whole
+    reader 10 to 30 times slower. A line holds its result twice, escaped,
+    so its bytes are a constant times its characters; the split among the
+    results of one reply is near the whole reader's.
+    **A call's target is read only for the lines shown** (`target`): every
+    call's target hides its secrets (`clip_hidden`), and read for every
+    call it made a month's reader half as slow again. A call that writes a
+    file reads its path at once, so the text it writes is not kept.
+    `test_the_cost_reader_reads_the_tool_results_the_whole_reader_does`,
+    `test_the_month_s_tool_results_kept_in_context_and_by_tool` (both
+    files), `test_the_daemon_reads_the_month_s_turns_of_the_sessions_it_keeps`.
 - **Every list of the tab has a bar a line, drawn one way, `putSumBar`**
   (#685): time by tool, calls by tool, the costliest turns and the
   slowest calls, each as long as its share of the most in its list. A

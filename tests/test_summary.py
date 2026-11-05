@@ -288,7 +288,10 @@ def test_the_daemon_reads_the_month_s_turns_of_the_sessions_it_keeps(ws, transcr
     today = time.strftime("%Y-%m-%d")
     path = transcript_file("s1", [
         record("you", "the costly one", ts=stamp),
-        reply(record("claude", "ok", ts=stamp), "m1", output_tokens=900)])
+        reply(record("tool", "cat big", ts=stamp, tool_id="t1"), "m1", input_tokens=1000,
+              output_tokens=900),
+        record("result", "x" * 300, ts=stamp, tool_id="t1"),
+        reply(record("claude", "ok", ts=stamp), "m2", cache_read_input_tokens=2000)])
     ws.append_event(event("SessionStart", ts=now, transcript_path=str(path)))
     ws.write_status("s1", ws.Status(name="kept", cost_usd=2.0, days={today: 2.0}))
     ws.write_status("gone", ws.Status(name="gone", cost_usd=7.0, days={today: 7.0}))
@@ -299,6 +302,9 @@ def test_the_daemon_reads_the_month_s_turns_of_the_sessions_it_keeps(ws, transcr
     assert [(one["id"], one["said"], one["usd"]) for one in got["turns"]] == [
         ("s1", "the costly one", 2.0)]
     assert got["days"][-1] == 9.0
+    # And its tool results kept in context, from the same reading.
+    assert [(one["call"], one["what"], one["tokens"]) for one in got["carried"]["results"]] \
+        == [("t1", "cat big", 100)]
     # Read on from where it stopped, by the same reader.
     reader = daemon.cost_readers[path]
     daemon.spend(now)
@@ -352,4 +358,91 @@ def test_a_tool_result_costs_each_later_reply_until_the_context_goes(ws, tmp_pat
     assert big["kept"] is False and big["replies"] == 2 and big["tokens"] == 600
     assert sent["share"] == round((600 * (860 / 1700 + 0.1) + 20 + 30) / total, 4)
     # The link goes to the call's block.
-    assert reader.blocks[big["seq"]].target == "cat big"
+    assert big["call"] == "t1"
+
+
+def test_the_cost_reader_reads_the_tool_results_the_whole_reader_does(ws, tmp_path):
+    """The month's tool results kept in context are read without the
+    blocks: a line of results with no text is not parsed, so its id is
+    read from the bytes and its length is the line's (`RAW_PER_CHAR`). The
+    calls, their targets and the replies that read them come out as the
+    whole reader's, and the tokens near them."""
+    path = tmp_path / "s1.jsonl"
+    path.write_text(records(
+        record("you", "look around"),
+        reply(record("tool", "cat big", tool_id="t1"), "m1", input_tokens=1000,
+              output_tokens=100),
+        reply(record("tool", "notes.md", tool="Read", tool_id="t2"), "m1",
+              input_tokens=1000, output_tokens=100),
+        # Its target is read at once: the text it writes is not kept.
+        reply(record("tool", "notes.md", tool="Edit", tool_id="t4"), "m1",
+              input_tokens=1000, output_tokens=100),
+        record("result", "x" * 3000, tool_id="t1"),
+        record("result", "y" * 1000, tool_id="t2"),
+        record("result", "e" * 1000, tool_id="t4"),
+        reply(record("tool", "ls", tool_id="t3"), "m2", cache_read_input_tokens=3100,
+              output_tokens=50),
+        # A result with a text part is parsed, as it can hold a prompt.
+        {"type": "user", "timestamp": "2026-09-18T14:01:00.000Z", "message": {
+            "role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t3",
+                 "content": [{"type": "text", "text": "z" * 400}]}]}},
+        reply(record("claude", "ok"), "m3", cache_read_input_tokens=3300)))
+    for one in [path, *sorted(FIXTURES.glob("*.jsonl"))]:
+        whole = ws.Transcript(str(one))
+        whole.read_new()
+        alone = ws.CostReader(one).read()
+
+        def read(carry):
+            return [(it.call, it.tool, it.target(), carry.weighed(it)[1], it.tokens)
+                    for it in carry.results]
+
+        got, want = read(alone.carry), read(whole.costs.carry)
+        assert [it[:4] for it in got] == [it[:4] for it in want], one.name
+        for mine, theirs in zip(got, want):
+            assert mine[4] == pytest.approx(theirs[4], rel=0.3), (one.name, mine, theirs)
+    got = {it.call: (it.tool, it.target(), it.tokens)
+           for it in ws.CostReader(path).read().carry.results}
+    # 2000 more, three fifths of it the biggest result's; a line's own
+    # fields make the smaller ones a little larger.
+    assert got == {"t1": ("Bash", "cat big", pytest.approx(1200, rel=0.05)),
+                   "t2": ("Read", "notes.md", pytest.approx(400, rel=0.1)),
+                   "t4": ("Edit", "notes.md", pytest.approx(400, rel=0.1)),
+                   "t3": ("Bash", "ls", 150)}
+
+
+def test_the_month_s_tool_results_kept_in_context_and_by_tool(ws):
+    """The reader asked for the month what the session's list says: the
+    tool results that cost the most while they stayed in context, of all
+    sessions kept, and what they cost by tool. Each is its share of its
+    session's whole total, as a turn's is; a call of last month is left
+    out, and a session with no cost gives no share."""
+    import time
+
+    def at(month, day):
+        return time.mktime((2026, month, day, 12, 0, 0, 0, 0, -1))
+
+    def costs(*results):
+        held = ws.Costs(turns=[ws.TurnCost(ts=at(10, 1), weight=1000.0)])
+        for call, tool, ts, weight in results:
+            held.carry.results.append(ws.ResultCost(call=call, tool=tool, ts=ts, what=call,
+                                                    tokens=weight * 10, weight=weight,
+                                                    replies=4, gone=True))
+        return held
+
+    statuses = {"a": ws.Status(name="first", cost_usd=10.0),
+                "b": ws.Status(name="second", cost_usd=2.0),
+                "d": ws.Status(name="no cost")}
+    got = ws.month_carried_json(at(10, 3), statuses, {
+        "a": costs(("a1", "Bash", at(10, 2), 100.0), ("a2", "Read", at(10, 3), 300.0),
+                   ("a0", "Bash", at(9, 30), 500.0)),
+        "b": costs(("b1", "Bash", at(10, 1), 250.0)),
+        "d": costs(("d1", "Bash", at(10, 2), 900.0))})
+    assert [(one["id"], one["call"], one["usd"], one["day"], one["tokens"], one["replies"])
+            for one in got["results"]] == [("a", "a2", 3.0, 3, 3000, 4),
+                                           ("a", "a1", 1.0, 2, 1000, 4),
+                                           ("b", "b1", 0.5, 1, 2500, 4)]
+    assert got["results"][0]["what"] == "a2" and got["results"][0]["name"] == "first"
+    assert got["tools"] == [{"tool": "Read", "usd": 3.0, "calls": 1, "tokens": 3000},
+                            {"tool": "Bash", "usd": 1.5, "calls": 2, "tokens": 3500}]
+    assert got["usd"] == 4.5

@@ -54,7 +54,9 @@ If a feature needs one of these, leave the feature out.
   session churn less. **What all sessions spent a day, and an allowance
   the reader sets, are in since #653**: the reader asked to see the way to
   a monthly allowance. **So are the month's costliest sessions and turns,
-  since #698**: what they spent, by session and by turn. Shown only, from the status lines' own numbers; a
+  since #698**: what they spent, by session and by turn; **and the tool
+  results that cost the most while they stayed in context, by call and by
+  tool**, for the session (#699) and the month. Shown only, from the status lines' own numbers; a
   bill or a price table is out. **A spend limit is out**: one shipped,
   typed into a terminal with nobody watching, and went with the Session
   tab that set it. The allowance stops nothing.
