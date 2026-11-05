@@ -12,6 +12,7 @@ import pytest
 
 import conftest
 from browser import (
+    TABS_END,
     kept,
     settings,
     open_file,
@@ -1056,8 +1057,8 @@ def test_the_file_line_ends_where_the_tab_row_ends(repo_page):
     with opened(repo_page) as page:
         open_file(page, "tabs.py")
         page.wait_for_selector(".filebody > .where .quick")
-        edges = page.evaluate("""() => ['#settings', '.filebody > .where .quick'].map(
-          (sel) => document.querySelector(sel).getBoundingClientRect().right)""")
+        edges = [page.evaluate(TABS_END), page.evaluate(
+            "document.querySelector('.filebody > .where .quick').getBoundingClientRect().right")]
         assert abs(edges[0] - edges[1]) < 1, edges
 
 

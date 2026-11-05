@@ -105,8 +105,14 @@ lines and icons, the chosen row, the grip, drags, folds, rows kept.
   folded history, and the chosen row is never missing from its list.
 - **There is no bar across the top.** The name and version head the
   session list (`.sidebar-head`, as tall as `.tabs`, so the rules under
-  them are one line); the settings are one icon at the tab row's end, its
-  words in `aria-label` and `title`. The version is `own_version`: the day
+  them are one line); the settings are one icon at the end of that head,
+  its words in `aria-label` and `title`. **Each control stands in the bar
+  of what it acts on** (#702), as the reader chose from pictures: in the
+  tab row, the settings stood among the session's tabs, and a newcomer
+  could not tell what each acts on. So the page's settings head the
+  session list, and the menu opens to the right, over the tabs; folded,
+  the head shows the settings alone, not the logo, so they stay in reach.
+  The tab row holds the session's tabs and jump. The version is `own_version`: the day
   the running file was written (for a copy `install` fetched, its commit's
   day, UTC) and the start of its SHA-256, the bytes `install_behind`
   compares -- never a number raised by hand. `--version` prints the same

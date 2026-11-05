@@ -1220,7 +1220,8 @@ def test_the_alert_panel_shuts_from_anywhere(page_at):
             page.click("#settings")
             page.wait_for_selector("#setpop", state="visible")
             if shut == "body click":
-                page.mouse.click(700, 500)
+                # Right of the menu, which opens over the tabs (#702).
+                page.mouse.click(1100, 500)
             elif shut == "escape":
                 page.keyboard.press("Escape")
             else:
@@ -1241,10 +1242,10 @@ def test_a_selection_that_ends_outside_the_menu_keeps_it_open(page_at):
         box = page.locator("#linklist .linkmatch").bounding_box()
         page.mouse.move(box["x"] + box["width"] - 4, box["y"] + box["height"] / 2)
         page.mouse.down()
-        page.mouse.move(700, 600, steps=5)
+        page.mouse.move(1100, 600, steps=5)
         page.mouse.up()
         assert page.is_visible("#setpop")
-        page.mouse.click(700, 600)
+        page.mouse.click(1100, 600)
         page.wait_for_selector("#setpop", state="hidden")
 
 

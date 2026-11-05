@@ -211,6 +211,11 @@ the loaders.
   (on the left it parted the file list from its session). `t` or
   `#chatbtn`; this browser keeps it (`wostuast-chat`), as a fold. Never
   over a view or beside the Transcript tab itself.
+  - **The button is in the Files and Review bars, built with each**
+    (#702, `putChatButton`), before the buttons that change how the tab is
+    drawn: md / txt stays last. In the tab row nobody could tell what it
+    acts on. Built, not moved: a bar is rebuilt, and a moved button went
+    with it. So `paintChatButton` finds none on the other tabs.
   - **Every reader of the drawn transcript asks `turnsHost()`**, never
     `$("content")`: a push patched a pane nobody saw. `patchTranscript`,
     `drawnTurns`, `loadTranscript`'s `onScreen`, `markSeen`.

@@ -15460,7 +15460,9 @@ body {
    colours button, a menu on the Review bar and two links over every file;
    the reader chose one menu from pictures. The slot is what the menu is
    measured from. */
-.setslot { position: relative; margin-left: 6px; display: flex; align-self: center; }
+/* At the end of the session list's head (issue 702): the settings are the
+   page's, and in the tab row they stood among the session's tabs. */
+.setslot { position: relative; margin-left: auto; display: flex; align-self: center; }
 .setslot .theme { margin-left: 0; position: relative; }
 /* Alerts off, said on the button: the bell was an icon of its own, and off
    was the one thing it said at a glance. */
@@ -15470,8 +15472,10 @@ body {
   align-items: center; justify-content: center;
 }
 .setslot .offmark .icon { width: 10px; height: 10px; stroke-width: 1.4; color: var(--ink-faint); }
+/* It opens over the tabs, to the right: from the list's head, at the
+   window's left, a menu measured from its right ran off the screen. */
 .setpop {
-  position: absolute; right: 0; top: calc(100% + 8px); z-index: 30;
+  position: absolute; left: 0; top: calc(100% + 8px); z-index: 30;
   /* A set width, for the ticket links' boxes: the reader asked for more
      room to write a pattern and a url in. The labels keep their narrow
      column, and the room left over goes to the controls' one. */
@@ -15709,12 +15713,19 @@ body {
 .findslot > .fold .icon { width: 17px; height: 17px; }
 .foldsessions .sidebar { width: var(--fold-w); }
 .foldsessions .sidebar > :not(.findslot, .sidebar-head, .rows),
-.foldsessions .sidebar-head > :not(.brand), .foldsessions .brandname,
+.foldsessions .sidebar-head > :not(.setslot),
 .foldsessions .sidebar .findslot > :not(.fold),
 .foldlist .content.split > .side > :not(.findslot),
 .foldlist .content.split > .side > .findslot > :not(.fold) { display: none; }
-/* Folded, the head holds the logo alone, in the middle of the strip. */
+/* Folded, the list column keeps the folder picker's height and hides it
+   (issue 702): a fold button that moved up by it was not under the pointer
+   any more (issue 492). After the rule that hides the rest of the column. */
+.foldlist .content.split > .side > .placeslot { display: flex; visibility: hidden; }
+/* Folded, the head holds the settings alone, in the middle of the strip
+   (issue 702): the logo says nothing the strip needs, and the settings
+   must stay in reach. */
 .foldsessions .sidebar-head { padding: 0; justify-content: center; align-items: center; }
+.foldsessions .sidebar-head .setslot { margin: 0; }
 .foldsessions .sidebar .findslot, .foldlist .content.split > .side > .findslot {
   padding-left: 0; padding-right: 0;
 }
@@ -16274,9 +16285,19 @@ body.switching #content::after {
    every sibling that is not -- so every click on an answer or into the
    send box went to the box under it. */
 .main > .asking { grid-row: 3; grid-column: 3; position: relative; }
-/* Which repository the Files and Review tabs show (issue 616), beside the
-   tabs: the commit picker's look (`.pickof`). */
-.tabs .pickplace { align-self: center; max-width: 32ch; flex-shrink: 0; }
+/* Which repository the Files and Review tabs show (issue 616): the commit
+   picker's look (`.pickof`). At the top of the list column (issue 702),
+   over the list it chooses, not in the tab row, where it stood among the
+   session's tabs and the page's settings. Last in the column's DOM and
+   first by `order`, so `split`'s parts keep their places. While no list
+   column shows it, it waits in `#placehome`, as the find box does. */
+.placehome { display: none; }
+.side > .placeslot {
+  order: -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 8px 10px 0;
+}
+.placeslot:not(:has(> :not([hidden]))) { display: none; }
+.placeslot .pickplace { flex: 1 1 0; min-width: 0; }
 /* A subagent's own transcript (issue 618): a bar, then its turns, read
    only. */
 .agenthead {
@@ -16398,10 +16419,10 @@ button.sumline:not(:disabled):hover { background: var(--raised); }
   display: inline-block; height: 8px; border-radius: 4px; background: var(--needs);
   opacity: 0.7; vertical-align: middle;
 }
-/* A folder to add (issue 624): typed beside the picker, in its face. */
-.tabs .placeadd { align-self: center; display: flex; }
+/* A folder to add (issue 624): typed under the picker, in its face. */
+.placeslot .placeadd { display: flex; flex: 1 1 100%; }
 .placeadd input {
-  width: 26ch; height: 26px; padding: 0 8px; border-radius: 5px;
+  width: 100%; height: 26px; padding: 0 8px; border-radius: 5px;
   border: 1px solid var(--edge-bright); background: var(--raised); color: var(--ink);
   font-family: var(--narrow); font-size: 13px;
 }
@@ -17436,6 +17457,11 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   background: var(--chosen); color: var(--ink-bright); border-color: var(--edge-bright);
 }
 .filebody .where .quick ~ .readas { margin-left: 0; }
+/* The transcript beside this tab (issue 702), at the right of its bar,
+   first of the buttons that change how the tab looks: md / txt stays the
+   last, where the reader reads a document's line to its end. */
+.chatbtn { margin-left: auto; flex-shrink: 0; }
+.chatbtn ~ .quick, .filebody .where .chatbtn ~ .readas { margin-left: 0; }
 /* Older, which of how many, newer: one control (`putDiffBar`). The count
    is a part of it with the parts' edge and height, and no button. */
 .stepper { flex-shrink: 0; }
@@ -17898,7 +17924,12 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
         target="_blank" rel="noopener noreferrer" title="wostuast on GitHub"><img
         class="logo" id="logo" alt=""><span class="brandname">wostuast</span></a><span
         class="version" title="the day this copy was made, and the start of its SHA-256"
-        >__WOSTUAST_VERSION__</span></div>
+        >__WOSTUAST_VERSION__</span>
+        <div class="setslot">
+          <button type="button" class="theme" id="settings"
+                  aria-haspopup="true" aria-expanded="false"></button>
+          <div class="setpop" id="setpop" hidden></div>
+        </div></div>
       <div class="findslot">
         <input class="find" id="pick" type="search" placeholder="filter sessions  f"
                autocomplete="off" spellcheck="false">
@@ -17930,15 +17961,18 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
           class="badge notes" id="reviewcount" hidden></span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="summary"
           title="Statistics  ·  4"><span class="tabkey">4</span>Statistics</button>
-        <button type="button" class="theme" id="chatbtn" aria-pressed="false"></button>
-        <select class="pickplace" id="placepick" hidden
-                title="which folder the Files and Review tabs show"></select>
-        <button type="button" class="theme" id="placedrop" hidden
-                title="take this folder off the list" aria-label="take this folder off the list"></button>
-        <form class="placeadd" id="placeadd" hidden>
-          <input id="placepath" type="text" spellcheck="false" autocomplete="off"
-                 placeholder="a folder, from / or ~" aria-label="the folder to add">
-        </form>
+        <div class="placehome" id="placehome">
+          <div class="placeslot" id="places">
+            <select class="pickplace" id="placepick" hidden
+                    title="which folder the Files and Review tabs show"></select>
+            <button type="button" class="theme" id="placedrop" hidden
+                    title="take this folder off the list" aria-label="take this folder off the list"></button>
+            <form class="placeadd" id="placeadd" hidden>
+              <input id="placepath" type="text" spellcheck="false" autocomplete="off"
+                     placeholder="a folder, from / or ~" aria-label="the folder to add">
+            </form>
+          </div>
+        </div>
         <div class="tabfill"></div>
         <div class="findhome" id="findhome">
           <input class="find" id="find" type="search" placeholder="find in transcript  /"
@@ -17951,11 +17985,6 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
                 aria-label="jump to its tmux pane"></button>
         <button type="button" class="theme" id="viewclose"
                 title="close the view  ·  esc" aria-label="close the view"></button>
-        <div class="setslot">
-          <button type="button" class="theme" id="settings"
-                  aria-haspopup="true" aria-expanded="false"></button>
-          <div class="setpop" id="setpop" hidden></div>
-        </div>
       </div>
       <div class="content" id="content"></div>
       <div class="chat" id="chat" hidden></div>
@@ -18343,6 +18372,10 @@ const ICONS = {
             + "M8.4 7.4l1.4 1.4 1.4-1.4",
   plain: "M2 3.4h10M2 6h10M2 8.6h10M2 11.2h6",
   twoColumns: "M1.8 2.2h10.4v9.6H1.8zM7 2.2v9.6",
+  // The transcript beside the tab (issue 702): a page with a narrow column
+  // of lines at its right. In the Review bar it stands beside `twoColumns`,
+  // the diff's two sides, and the two looked like one button twice.
+  sideTranscript: "M1.8 2.2h10.4v9.6H1.8zM8.4 2.2v9.6M9.6 4.6h1.4M9.6 6.6h1.4M9.6 8.6h1.4",
   // The repository and the branch on a sidebar row: a book, as git hosts
   // draw a repository, and the fork of a branch leaving its line.
   repo: "M3 2.8a1 1 0 0 1 1-1h7v9.4H4a1 1 0 0 0-1 1zM3 11.2a1 1 0 0 0 1 1h7v-1",
@@ -19454,7 +19487,7 @@ function openFeed(kind = "unread") {
   state.feedText = new Map();
   if (VIEWS[kind].open) VIEWS[kind].open();
   document.body.classList.add("infeed");
-  homeFind($("findhome"));
+  sendHome();
   draw();
   drawFeedLink();
   // Now, not on the row's observer: that fires a frame later, and the grip
@@ -23779,9 +23812,23 @@ function homeFind(where) {
   if (box.parentNode !== where) where.appendChild(box);
 }
 
+// The folder picker's slot, moved as the find box is (issue 702): into the
+// list column of the Files and Review tabs, and home before a box that
+// holds it is emptied, or it goes with every listener on it.
+function homePlaces(where) {
+  const slot = $("places");
+  if (slot.parentNode !== where) where.appendChild(slot);
+}
+
+// Both moved parts home, before the box they may be in is emptied.
+function sendHome() {
+  homeFind($("findhome"));
+  homePlaces($("placehome"));
+}
+
 function split(box, tab, bodyClass) {
   if (box.dataset.tab !== tab) {
-    homeFind($("findhome"));   // it may be inside what is about to be cleared
+    sendHome();                // it may be inside what is about to be cleared
     box.replaceChildren();
     box.dataset.tab = tab;
     box.dataset.listKey = "";
@@ -23820,6 +23867,7 @@ function split(box, tab, bodyClass) {
   }
   const side = box.firstChild;
   homeFind(side.firstChild);
+  if (tab === "files" || tab === "diff") homePlaces(side);
   // By position, so that adding a part above does not silently renumber the
   // rest: findslot, count, list, foot.
   // And by position on this side too, not `box.lastChild`: the Transcript
@@ -24822,6 +24870,7 @@ function putAbout(where, windowed) {
 function putFileHead(pane, windowed, asCode, isDoc) {
   const where = putWhere(pane, state.files.path);
   putAbout(where, windowed);
+  putChatButton(where);
   if (asCode) putQuick(where, ["spacemarks", "codewidth", "wrapping"]);
   if (isDoc) putAsText(where);
 }
@@ -25257,6 +25306,7 @@ function putDiffBar(pane) {
   // is 1: stepping through a review, "5 / 9" says how far there is to go.
   put(stepper, "span", "stepat");
   step("chevron", "newer: the commit after this one", -1);
+  putChatButton(bar);
   putQuick(bar, ["sides", "spacechanges", "codewidth"]);
   const scroll = put(pane, "div", "diffscroll");
   // Which file is under the top of the pane, marked in the tree, the way a
@@ -27716,7 +27766,7 @@ function paint() {
     // The find box lives inside this box, so it goes home before the box is
     // emptied, or it is destroyed with every listener on it and the next
     // `$("find")` throws. A tab's own rebuild does the same in `split`.
-    homeFind($("findhome"));
+    sendHome();
     box.replaceChildren();
     box.dataset.tab = "";       // nothing is built, so the next tab rebuilds
     drawEmpty(box);
@@ -27786,11 +27836,25 @@ function toggleChat() {
   if (chatShown() && !state.turns.whole) loadTranscript();
 }
 
+// The button for the transcript beside the tab, at the right end of the
+// Files or Review tab's bar (issue 702): it changes how the tab is laid
+// out, as the buttons beside it change how it is drawn. In the tab row it
+// stood among the session's tabs, and nobody could tell what it was for.
+// Built with each bar, so there is one at most; `t` works from anywhere.
+function putChatButton(bar) {
+  const button = put(bar, "button", "theme chatbtn");
+  button.type = "button";
+  button.id = "chatbtn";
+  button.addEventListener("click", toggleChat);
+  paintChatButton();
+}
+
 function paintChatButton() {
   const button = $("chatbtn");
+  if (!button) return;
   const on = chatWanted();
   button.replaceChildren();
-  putIcon(button, "twoColumns");
+  putIcon(button, "sideTranscript");
   button.title = (on ? "put the transcript away" : "the transcript beside this tab")
     + "  \u00b7  t";
   button.setAttribute("aria-label", button.title);
@@ -28062,7 +28126,7 @@ function drawSummary(box) {
   // the summary into the list's narrow column.
   box.className = "content summarybox";
   if (box.dataset.tab !== "summary") {
-    homeFind($("findhome"));
+    sendHome();
     box.dataset.tab = "summary";
     box.dataset.listKey = box.dataset.bodyKey = box.dataset.summaryKey = "";
   }
@@ -29576,7 +29640,6 @@ putIcon($("viewclose"), "close");
 $("viewclose").addEventListener("click", leaveFeed);
 $("jump").title = JUMP_TITLE;
 $("jump").addEventListener("click", jumpToPane);
-$("chatbtn").addEventListener("click", toggleChat);
 $("placepick").addEventListener("change", (press) => {
   if (press.target.value !== ADD_PLACE) { pickPlace(press.target.value); return; }
   press.target.value = state.place;
