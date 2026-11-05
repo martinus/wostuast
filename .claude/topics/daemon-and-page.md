@@ -208,14 +208,27 @@ the loaders.
 - **The transcript can stand beside the Files or Review tab** (#625,
   `chatShown`, `paintChat`, `turnsHost`, `#chat`, `body.sidechat`): a
   fourth column of `.main` on the right, as the reader chose from pictures
-  (on the left it parted the file list from its session). `t` or
-  `#chatbtn`; this browser keeps it (`wostuast-chat`), as a fold. Never
-  over a view or beside the Transcript tab itself.
-  - **The button is in the Files and Review bars, built with each**
-    (#702, `putChatButton`), before the buttons that change how the tab is
-    drawn: md / txt stays last. In the tab row nobody could tell what it
-    acts on. Built, not moved: a bar is rebuilt, and a moved button went
-    with it. So `paintChatButton` finds none on the other tabs.
+  (on the left it parted the file list from its session). Never over a view
+  or beside the Transcript tab itself.
+  - **It folds as the session list and the file list do, and starts
+    folded** (#712, `chatBeside`, `putChatFold`, `putChatStrip`,
+    `#chatfold`, `body.chatstrip`), as the reader asked: one way to put a
+    column away. Folded, it is a strip as wide as its button (`--fold-w`),
+    with the word under the button, and the word opens it too. `t` or the
+    button; this browser keeps it (`wostuast-chat`, open when "1", so a
+    reader who had it open still has). A button in the tab's bar and a
+    cross in the column's head did it before, and the button never looked
+    pressed (#710): the fold's icon says the state.
+  - **The button stands `--fold-in` from the column's right edge, open or
+    folded** (#492): the head is built again for each, and the strip's
+    keeps its transparent rule, or it stood a pixel off. **Over the strip,
+    the tab row ends where the bars end** (`body.chatstrip .tabs`): every
+    line's right-hand controls end on one line (topics/settings).
+  - **The list column's width is `--list-col`, said once** (#709): beside
+    the transcript the grid had columns of its own with the open width,
+    and a folded list left that much empty.
+    `test_the_transcript_column_folds_as_the_lists_do`,
+    `test_the_transcript_is_never_beside_itself`.
   - **Every reader of the drawn transcript asks `turnsHost()`**, never
     `$("content")`: a push patched a pane nobody saw. `patchTranscript`,
     `drawnTurns`, `loadTranscript`'s `onScreen`, `markSeen`.
