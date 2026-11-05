@@ -11318,20 +11318,24 @@ class Daemon:
 
     def run(self) -> None:
         while not self.stopping.is_set():
+            # Looked at before the tick, not after: a line written while
+            # the tick ran was in a look taken after it, and waited a whole
+            # `TICK`.
+            seen = self.news()
             try:
                 self.tick()
             except Exception as error:  # a bad tick must not stop the daemon
                 log(f"tick failed: {error!r}")
-            self.wait_for_news()
+            self.wait_for_news(seen)
 
-    def wait_for_news(self) -> None:
+    def wait_for_news(self, seen: tuple[tuple[int, int] | None, ...]) -> None:
         """Wait for the next tick: `TICK`, or less once the event log or a
-        transcript a browser shows has grown (#703). A line Claude Code
-        wrote reached the page up to a whole `TICK` later, half of one on
-        average. A tick costs about 5 ms at 100 sessions (`tests/scale.py`),
-        and a look a `stat` a file, so a quiet daemon does no more work."""
+        transcript a browser shows is no longer as `seen` (#703). A line
+        Claude Code wrote reached the page up to a whole `TICK` later, half
+        of one on average. A tick costs about 5 ms at 100 sessions
+        (`tests/scale.py`), and a look a `stat` a file, so a quiet daemon
+        does no more work."""
         until = time.monotonic() + TICK
-        seen = self.news()
         while not self.stopping.wait(LOOK_EVERY):
             if time.monotonic() >= until or self.news() != seen:
                 return

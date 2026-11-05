@@ -552,7 +552,8 @@ def test_the_next_tick_comes_once_the_log_or_a_shown_transcript_grows(
 
     def ends_the_wait(change) -> bool:
         done = threading.Event()
-        threading.Thread(target=lambda: (daemon.wait_for_news(), done.set()),
+        seen = daemon.news()
+        threading.Thread(target=lambda: (daemon.wait_for_news(seen), done.set()),
                          daemon=True).start()
         time.sleep(0.1)
         change()
@@ -573,20 +574,26 @@ def test_the_next_tick_comes_once_the_log_or_a_shown_transcript_grows(
         daemon.hub.drop(client)
         assert ends_the_wait(lambda: ws.append_event(event("Notification", message="hi"))), \
             "the event log grew, and the wait went on"
-        # And the daemon's own loop waits so.
+        # And the daemon's own loop waits so, from a look taken before its
+        # tick: an event written while a tick ran waited a whole `TICK`.
         ticks = []
         real = daemon.tick
-        monkeypatch.setattr(daemon, "tick", lambda: (ticks.append(1), real()))
+
+        def tick() -> None:
+            ticks.append(1)
+            if len(ticks) == 1:
+                ws.append_event(event("Notification", message="during the tick"))
+            real()
+
+        monkeypatch.setattr(daemon, "tick", tick)
         threading.Thread(target=daemon.run, daemon=True).start()
         deadline = time.monotonic() + 3
-        while not ticks and time.monotonic() < deadline:
-            time.sleep(0.02)
-        ws.append_event(event("Notification", message="again"))
         while len(ticks) < 2 and time.monotonic() < deadline + 3:
             time.sleep(0.02)
         assert len(ticks) >= 2, "the loop waited out its tick"
     finally:
         daemon.stopping.set()
+
 
 # --- what the page is sent ---------------------------------------------------
 

@@ -19,7 +19,9 @@ the loaders.
   median 450 ms, at most 971, before; 119 and 197 after. A look is a `stat`
   a file, and a tick costs about 5 ms at 100 sessions (`tests/scale.py`),
   so a quiet daemon does no more work. Only a watched transcript counts:
-  one nobody shows is read by no tick.
+  one nobody shows is read by no tick. **The look the wait compares with
+  is taken before the tick, never after**: a line written while a tick
+  ran was already in a look taken after it, and waited a whole `TICK`.
   `test_the_next_tick_comes_once_the_log_or_a_shown_transcript_grows`.
   - **A reply still being written is not in the transcript yet.**
     Measured on 2.1.318 with `tests/claude_pane.py`: a text block streamed
