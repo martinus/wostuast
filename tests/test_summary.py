@@ -44,7 +44,6 @@ def test_a_reply_counts_once_and_a_turn_runs_from_prompt_to_prompt(ws, tmp_path)
     assert costs.turns[0].replies == 2
     assert costs.turns[1].tokens == {"input_tokens": 1, "output_tokens": 2,
                                      "cache_creation_input_tokens": 40}
-    assert costs.tools == {"Bash": 2}
     # Weighted as Anthropic prices them: output 5, a cache read a tenth.
     assert (costs.turns[0].weight, costs.turns[1].weight) == (650.0, 61.0)
     # The prompt's block, for a link to it.
@@ -212,7 +211,6 @@ def test_the_cost_reader_reads_the_turns_the_whole_reader_does(ws, tmp_path):
                  for turn in alone.turns]
                 == [(turn.said, turn.ts, turn.tokens, turn.weight, turn.replies)
                     for turn in whole.costs.turns]), one.name
-        assert alone.tools == whole.costs.tools, one.name
     assert [turn.said for turn in ws.CostReader(path).read().turns] == [
         'what does "tool_result" mean?', "and now the tests"]
     # A tool's result with no text is most of the bytes, and is not parsed.

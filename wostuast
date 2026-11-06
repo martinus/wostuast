@@ -5068,7 +5068,6 @@ class Costs:
     its `message.id`."""
 
     turns: list[TurnCost] = field(default_factory=list)
-    tools: dict[str, int] = field(default_factory=dict)
     seen: set[str] = field(default_factory=set)
     carry: Carry = field(default_factory=Carry)
 
@@ -5089,10 +5088,6 @@ class Costs:
         message = record.get("message")
         if not isinstance(message, dict):
             return
-        for part in message.get("content") or []:
-            if isinstance(part, dict) and part.get("type") == "tool_use":
-                tool = str(part.get("name") or "?")
-                self.tools[tool] = self.tools.get(tool, 0) + 1
         mid, used = str(message.get("id") or ""), message.get("usage")
         if not mid or mid in self.seen or not isinstance(used, dict):
             return
@@ -10475,16 +10470,6 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
     status = session.status
     total = sum(turn.weight for turn in costs.turns)
     worst = sorted(costs.turns, key=lambda turn: -turn.weight)[:COSTLY_SHOWN]
-    kinds: dict[str, dict[str, Any]] = {}
-    for one in session.subagents.values():
-        held = kinds.setdefault(one.kind or "subagent",
-                                {"kind": one.kind or "subagent", "ran": 0, "tokens": 0,
-                                 "calls": 0, "seconds": 0.0})
-        held["ran"] += 1
-        held["tokens"] += one.tokens
-        held["calls"] += one.calls
-        if one.ended:
-            held["seconds"] += max(0.0, one.ended - one.started)
     return {
         "id": session.session_id,
         "cost_usd": status.cost_usd, "wall_ms": status.wall_ms, "api_ms": status.api_ms,
@@ -10503,10 +10488,10 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
                    for turn in worst if turn.weight],
         # The tool results that cost the most while they stayed in context.
         "carried": carried_json(costs.carry, status.cost_usd, total),
-        "subagents": sorted(kinds.values(), key=lambda one: -one["tokens"]),
-        # Subagents run before #618 counted no calls; `agents_ran` counts all.
+        # How many subagents ran, for the note over the ones the row keeps
+        # (`putSumRuns`). The lists of subagents by kind and of calls by
+        # tool went with the page's lists (#723): nothing read them.
         "agents_ran": session.agents_ran,
-        "tools": sorted(costs.tools.items(), key=lambda one: (-one[1], one[0])),
         # How long the session's own calls ran, by tool, and the slowest
         # (#663), from the events: a transcript holds no call's time.
         "tool_time": [{"tool": tool, "calls": int(calls), "seconds": round(seconds, 3)}
@@ -28148,14 +28133,15 @@ function paintChat() {
 // reader away from the numbers they were reading. The caller has chosen the
 // session and set the place (`goTo` and the rest). The column is filled
 // again, so it lands there: one that shows the same blocks is left as it
-// is (`paintChat`), and only a fill asks for a landing (`toLand`).
+// is (`paintChat`), and only a fill asks for a landing (`toLand`). No load
+// of its own: `load` and the stream's catch-up fetch the transcript as
+// soon, and a line here no test could tell apart went (#728).
 function showInChat() {
   if (!chatWanted()) store("wostuast-chat", "1");
   const pane = $("chat").querySelector(":scope > .turnbody");
   if (pane) pane.drawnBlocks = null;
   drawHeader();
   draw();
-  if (!state.turns.whole) loadTranscript();
 }
 
 // The column folded (issue 712): its head with the button alone, where the
