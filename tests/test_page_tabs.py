@@ -990,9 +990,9 @@ def test_the_transcript_column_s_head_lines_up_with_the_bars_beside_it(repo_page
 
 def test_the_summary_tab_says_where_the_tokens_went(ws, page_at):
     """The fourth tab (#622): what was spent, the costliest turns with
-    their share, the calls by tool; a turn is a link to it in the
-    transcript. Key 4, as the reader chose; the
-    Commands view moved to 5."""
+    their share, the subagents; a turn is a link to it in the transcript.
+    Key 4, as the reader chose; the Commands view moved to 5. Three parts,
+    each answering one question (#723)."""
     daemon, path = page_at
 
     def reply(made, mid, **used):
@@ -1027,9 +1027,14 @@ def test_the_summary_tab_says_where_the_tokens_went(ws, page_at):
         assert "$1.83" in head and "spent" in head and "+12 \u22123" in head, head
         lines = page.locator(".sumline.turnlink").all_inner_texts()
         assert "Rename the parser." in lines[0] and "\u2248$" in lines[0], lines
-        assert "Bash" in page.locator(".summary").inner_text()
-        agents = page.locator(".sumcard:not(.wide) .sumline", has_text="Explore").inner_text()
-        assert "\u00d71" in agents and "1 call" in agents, agents
+        parts = [" ".join(one.split())
+                 for one in page.locator(".sumgroup > .sumsection").all_inner_texts()]
+        assert parts == ["1 What it cost", "2 Where the money went", "3 Where the time went"]
+        # Its subagent, in the time part: the list by kind said it again.
+        agents = page.locator(".sumcard", has_text="subagents") \
+            .locator(".sumline", has_text="Explore").inner_text()
+        assert "1 call" in agents, agents
+        assert page.locator(".sumcard", has_text="calls by tool").count() == 0
         # No place to pick: that is the Files and Review tabs'.
         assert page.locator("#placepick").is_hidden()
         page.locator(".sumline.turnlink", has_text="Rename the parser.").click()
@@ -1106,6 +1111,12 @@ def test_the_statistics_tab_says_where_the_time_went_by_tool(ws, page_at):
           .some((one) => one.textContent.includes('grep -r parse'))""")
 
 
+def show_month(page):
+    """All sessions this month, behind the Statistics tab's switch (#723)."""
+    page.click(".statswitch [data-view=month]")
+    page.wait_for_selector(".sumpart.month")
+
+
 def test_the_statistics_tab_uses_a_wide_screen(ws, page_at):
     """One column of 980 px left most of a wide screen empty, and the month
     below the fold (#683). Where the pane is wide enough, the two sections
@@ -1127,23 +1138,31 @@ def test_the_statistics_tab_uses_a_wide_screen(ws, page_at):
         page.set_viewport_size({"width": 2560, "height": 1440})
         wait_for_map(page)
         page.keyboard.press("4")
-        page.wait_for_selector(".spendsvg")
         page.wait_for_selector(".sumcard >> text=make test")
         boxes = """() => [...document.querySelectorAll(SELECTOR)].map((one) => {
           const at = one.getBoundingClientRect();
           return [Math.round(at.left), Math.round(at.top), Math.round(at.right),
                   Math.round(at.bottom)]; })"""
-        parts = page.evaluate(boxes.replace("SELECTOR", "'.sumpart'"))
-        assert len(parts) == 2 and parts[0][1] == parts[1][1] \
-            and parts[1][0] > parts[0][2], parts
-        cards = page.evaluate(boxes.replace("SELECTOR", "'.sumcard'"))
+        # One view at a time (#723): the session, and no month beside it.
+        assert page.locator(".sumpart").count() == 1
+        assert page.locator(".sumpart.month").count() == 0
+        # Two cards to a row, never more, however wide: a line is read across.
+        cards = page.evaluate(boxes.replace("SELECTOR", "'.sumgroup:last-child .sumcards > *'"))
         assert len(cards) >= 2 and cards[0][1] == cards[1][1], cards
-        assert page.evaluate("""() => { const box = document.getElementById('content');
-          return box.scrollHeight <= box.clientHeight; }""")
-        page.set_viewport_size({"width": 1280, "height": 900})
-        page.wait_for_function("""() => { const [one, two] =
-          document.querySelectorAll('.sumpart');
-          return two.getBoundingClientRect().top >= one.getBoundingClientRect().bottom; }""")
+        assert len({one[0] for one in cards}) <= 2, cards
+        assert page.evaluate("document.querySelector('.summary')"
+                             ".getBoundingClientRect().width") <= 1100
+        # The switch shows the month, and back; this browser keeps it.
+        show_month(page)
+        page.wait_for_selector(".spendsvg")
+        assert page.locator(".sumpart:not(.month)").count() == 0
+        assert page.get_attribute(".statswitch [data-view=month]", "aria-pressed") == "true"
+        page.reload()
+        wait_for_map(page)
+        page.keyboard.press("4")
+        page.wait_for_selector(".sumpart.month")
+        page.click(".statswitch [data-view=session]")
+        page.wait_for_selector(".sumpart:not(.month) .sumhead")
 
 
 def test_the_costliest_turns_and_the_slowest_calls_have_bars(ws, page_at):
@@ -1287,6 +1306,7 @@ def test_the_month_s_tool_results_kept_in_context_and_by_tool(pair_at):
         mine = page.evaluate("(id) => rowName(state.sessions.find((s) => s.id === id))", "s1")
         page.evaluate("choose('s2')")
         page.keyboard.press("4")
+        show_month(page)
         page.evaluate("loadSpend()")
         card = page.locator(".sumpart.month .sumcard.wide", has_text="tool results kept")
         card.locator(".sumline >> nth=1").wait_for()
@@ -1326,6 +1346,7 @@ def test_the_month_s_charts_show_the_weekdays_and_the_workdays_left(page_at):
             status=200, content_type="application/json", body=json.dumps(month)))
         wait_for_map(page)
         page.keyboard.press("4")
+        show_month(page)
         page.evaluate("loadSpend()")
         page.wait_for_function("state.spend && state.spend.today === '2026-11-03'")
         page.wait_for_selector(".spendweekend", state="attached")
@@ -1372,6 +1393,7 @@ def test_the_month_names_its_costliest_sessions_and_turns(pair_at):
         name = page.evaluate("(id) => rowName(state.sessions.find((s) => s.id === id))", "s2")
         mine = page.evaluate("(id) => rowName(state.sessions.find((s) => s.id === id))", "s1")
         page.keyboard.press("4")
+        show_month(page)
         page.evaluate("loadSpend()")
         page.wait_for_selector(".sumpart.month .turnlink >> nth=3")
 
@@ -1390,10 +1412,11 @@ def test_the_month_names_its_costliest_sessions_and_turns(pair_at):
         bar = page.locator(".sumpart.month .kindbar")
         assert bar.locator(".kindshare").all_inner_texts() == ["75%", "25%"]
         assert "output: 1k tokens" in bar.get_attribute("aria-label")
-        # The month's bars are its charts' colour; the session's another.
+        # One colour for every list's bars (#723): one view at a time, so
+        # no second colour is needed to say which a list is of.
         colour = "(selector) => getComputedStyle(document.querySelector(selector)).backgroundColor"
         spend = page.evaluate("getComputedStyle(document.querySelector('.spendday')).fill")
-        assert page.evaluate(colour, ".sumpart.month .sumbar") == spend
+        assert page.evaluate(colour, ".sumpart.month .sumbar") != spend
         # On a hover, the days it spent stand out on both charts, as the
         # reader asked: s2 spent on the 1st and the 3rd.
         page.evaluate("state.spend.sessions[0].days = [1, 0, 3]")
@@ -1430,10 +1453,6 @@ def test_the_month_names_its_costliest_sessions_and_turns(pair_at):
         assert page.evaluate("state.chosen") == "s1"
         assert page.evaluate("state.tab") == "summary"
         assert "pytest -q" in page.evaluate("window.landedOn[0]")
-        # This session's bars, in their own colour: s1 ran a call.
-        page.keyboard.press("4")
-        page.wait_for_selector(".sumpart:not(.month) .sumbar")
-        assert page.evaluate(colour, ".sumpart:not(.month) .sumbar") != spend
 
 
 def test_the_session_s_time_and_tokens_are_charts(ws, page_at):
@@ -1474,7 +1493,7 @@ def test_the_session_s_time_and_tokens_are_charts(ws, page_at):
         # The time, a line each on one scale, as time by tool reads: the
         # life's 4000 s, busy 600 s, the model's 1000 s.
         lines = page.eval_on_selector_all(
-            ".sumchart >> nth=0 >> .sumline", """all => all.map((one) => [
+            ".sumchart:not(:has(.kindbar)) .sumline", """all => all.map((one) => [
               one.querySelector('.sumnum').textContent,
               one.querySelector('.sumbar').style.width,
               one.querySelector('.sumsaid').textContent])""")
@@ -1558,17 +1577,18 @@ def test_the_statistics_tab_draws_the_month_against_the_allowance(ws, page_at):
     with opened(path) as page:
         wait_for_map(page)
         page.keyboard.press("4")
+        show_month(page)
         page.wait_for_selector(".summary .sumnote >> nth=-1")
         page.wait_for_function("!!state.spend")
         assert "Nothing kept yet" in page.locator(".summary").inner_text()
-        assert [one.strip() for one in page.locator(".sumsection").all_inner_texts()] == [
-            "This session", "All sessions this month"]
+        assert page.locator(".statswitch button").all_inner_texts() == [
+            "This session", "This month, all sessions"]
         # Two sessions: one new today, one that spent a dollar yesterday.
         ws.write_status("s1", ws.Status(cost_usd=2.0, days={today: 2.0}))
         ws.write_status("s2", ws.Status(cost_usd=4.0, days={yesterday: 1.0, today: 4.0}))
         page.evaluate("loadSpend()")
         page.wait_for_selector(".spendsvg")
-        tiles = page.locator(".sumhead").nth(1).inner_text()
+        tiles = page.locator(".sumhead").first.inner_text()
         # Yesterday's dollar is this month's too, unless today is the 1st.
         month = 6 if yesterday[:7] == today[:7] else 5
         assert f"${month}.00\nspent" in tiles and "$5.00\ntoday" in tiles, tiles
