@@ -509,7 +509,8 @@ at a day to read its amount. Set an **allowance** in the settings to see it
 as a line, and how much is left or over. The page only shows it: nothing
 stops an agent. Under the charts, the bar of what the month's tokens cost.
 It counts the turns that began this month, of the sessions that wostuast
-still keeps.
+still keeps. Under it, the same tokens by what they were for, as for one
+session; the start is each session's own.
 
 In part 2, the costliest sessions of the month, by what each spent this
 month, and the costliest turns of all sessions. Point at one to see on the

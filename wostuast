@@ -4892,6 +4892,13 @@ class TurnCost:
     tokens: dict[str, int] = field(default_factory=dict)
     weight: float = 0.0         # tokens by `TOKEN_WEIGHTS`
     replies: int = 0
+    # What its replies' contexts cost, weighted; their weight a token,
+    # summed, for the start every reply reads again; and what the tool
+    # results in them cost. The month's split by what the tokens were for
+    # takes the turns that began in it (`month_tokens_json`).
+    read_weight: float = 0.0
+    read_per: float = 0.0
+    read_results: float = 0.0
 
 
 #: The kinds of token a reply reads its context as: the context's size is
@@ -4967,6 +4974,7 @@ class Carry:
     #: cost, weighted: for the split by what the tokens were for.
     least: int = 0
     read_weight: float = 0.0
+    live_tokens: float = 0.0    # the tokens of the results in context now
 
     def called(self, record: dict[str, Any], blocks: list["Block"]) -> None:
         """A reply's calls, kept until their results come. Its target is
@@ -5023,12 +5031,14 @@ class Carry:
                 one.chars = int(len(line) / len(answered) / RAW_PER_CHAR)
                 self.waiting.append(one)
 
-    def read(self, used: dict[str, Any]) -> None:
-        """One reply, counted once: what it read, and what came in before it."""
+    def read(self, used: dict[str, Any]) -> tuple[float, float, float] | None:
+        """One reply, counted once: what it read, and what came in before it.
+        Hands back what reading its context cost, that a token, and what
+        the tool results in it cost, for its turn; None for no context."""
         context = sum(count for key in CONTEXT_KEYS
                       if isinstance(count := used.get(key), int) and count > 0)
         if not context:
-            return
+            return None
         if context < self.last_context * CONTEXT_FELL:
             self.forget()
         if self.last_context:
@@ -5040,6 +5050,7 @@ class Carry:
                     one.since, one.since_n = self.read_sum, self.read_n
                     self.live.append(one)
                     self.results.append(one)
+                    self.live_tokens += one.tokens
         self.waiting, self.other = [], 0
         weight = sum(TOKEN_WEIGHTS[key] * count for key in CONTEXT_KEYS
                      if isinstance(count := used.get(key), int) and count > 0)
@@ -5049,6 +5060,7 @@ class Carry:
         self.read_n += 1
         out = used.get("output_tokens")
         self.last_context, self.last_out = context, out if isinstance(out, int) else 0
+        return weight, weight / context, self.live_tokens * weight / context
 
     def parts(self) -> dict[str, float]:
         """What reading the context cost, by what it held (weighted tokens):
@@ -5070,6 +5082,7 @@ class Carry:
             one.weight, one.replies = self.weighed(one)
             one.gone = True
         self.live, self.waiting, self.other = [], [], 0
+        self.live_tokens = 0.0
         self.last_context = self.last_out = 0
 
     def weighed(self, one: ResultCost) -> tuple[float, int]:
@@ -5113,11 +5126,15 @@ class Costs:
         if not mid or mid in self.seen or not isinstance(used, dict):
             return
         self.seen.add(mid)
-        self.carry.read(used)
+        read = self.carry.read(used)
         if not self.turns:
             self.turns.append(TurnCost(said="(before the first prompt)"))
         turn = self.turns[-1]
         turn.replies += 1
+        if read:
+            turn.read_weight += read[0]
+            turn.read_per += read[1]
+            turn.read_results += read[2]
         for key, weight in TOKEN_WEIGHTS.items():
             count = used.get(key)
             if isinstance(count, int) and count > 0:
@@ -10602,14 +10619,23 @@ def month_costly_json(now: float, statuses: dict[str, Status],
             "turns": sorted(turns, key=lambda one: -one["usd"])[:COSTLY_SHOWN]}
 
 
-def month_tokens_json(now: float, costs: dict[str, Costs]) -> dict[str, dict[str, Any]]:
+def month_tokens_json(now: float, costs: dict[str, Costs]) -> dict[str, Any]:
     """The tokens of this calendar month's turns, of all sessions the
-    daemon keeps, by kind and by what they cost (#722), as the reader
-    asked: the session's bar, for the whole month. A turn is this month's
-    when it began in it, as for the month's costliest turns."""
+    daemon keeps, by kind and by what they cost (#722), and by what they
+    were for, as the reader asked: the session's bar and list, for the
+    whole month. A turn is this month's when it began in it, as for the
+    month's costliest turns."""
     month = local_day(now)[:8]
-    return tokens_json(turn for held in costs.values() for turn in held.turns
-                       if turn.ts and local_day(turn.ts).startswith(month))
+    mine = [(held.carry.least, turn) for held in costs.values() for turn in held.turns
+            if turn.ts and local_day(turn.ts).startswith(month)]
+    # By what they were for, as a session's (`Carry.parts`): each session's
+    # own start, its smallest context, read again by each of its replies.
+    start = sum(least * turn.read_per for least, turn in mine)
+    results = sum(turn.read_results for _, turn in mine)
+    read = sum(turn.read_weight for _, turn in mine)
+    return {**tokens_json(turn for _, turn in mine),
+            "read": {"start": round(start, 1), "results": round(results, 1),
+                     "conversation": round(max(0.0, read - start - results), 1)}}
 
 
 def month_carried_json(now: float, statuses: dict[str, Status],
@@ -28561,6 +28587,7 @@ function putSpend(pane, spend, allowance) {
   // The session's bar of what its tokens cost, for the whole month (#722):
   // the turns that began this month, of the sessions the daemon keeps.
   putSumKinds(cost, spend.kinds || {});
+  putSumFor(cost, spend.kinds || {});
   const cards = put(putSumPart(pane, 2, "Where the money went", "The sessions, the turns"
                                + " and the tool results that cost the most this month."),
                     "div", "sumcards");
@@ -28996,9 +29023,12 @@ function putSumFor(parent, got) {
   const writing = (got.weighted || {}).output_tokens || 0;
   if (!read) return;
   const parts = [
-    [read.start, "the start every reply reads again: system prompt, tools, CLAUDE.md",
-     "about: the smallest context any reply read, " + roughly(read.start_tokens)
-     + " tokens, read again by every reply"],
+    [read.start, "the start: system prompt, tools, CLAUDE.md",
+     "every reply reads it again. About: "
+     + (read.start_tokens === undefined
+       ? "each session's smallest context, read again by each of its replies"
+       : "the smallest context any reply read, " + roughly(read.start_tokens)
+         + " tokens, read again by every reply")],
     [read.conversation, "the conversation: prompts, replies, what the calls sent",
      "the rest of what the replies read: what was said, and the input of each call, such"
      + " as the text an Edit or a Write sends"],

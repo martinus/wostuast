@@ -1400,7 +1400,9 @@ def test_the_month_names_its_costliest_sessions_and_turns(pair_at):
                         "ts": called, "usd": 0.5, "tokens": {}}],
              # Its tokens by what they cost (#722): output three quarters.
              "kinds": {"tokens": {"output_tokens": 1000, "cache_read_input_tokens": 50000},
-                       "weighted": {"output_tokens": 75.0, "cache_read_input_tokens": 25.0}}}
+                       "weighted": {"output_tokens": 75.0, "cache_read_input_tokens": 25.0},
+                       # By what they were for: of 150 with writing's 75.
+                       "read": {"start": 40.0, "conversation": 10.0, "results": 25.0}}}
     with opened(path) as page:
         page.route("**/api/spend", lambda route: route.fulfill(
             status=200, content_type="application/json", body=json.dumps(month)))
@@ -1427,6 +1429,11 @@ def test_the_month_names_its_costliest_sessions_and_turns(pair_at):
         bar = page.locator(".sumpart.month .kindbar")
         assert bar.locator(".kindshare").all_inner_texts() == ["75%", "25%"]
         assert "output: 1k tokens" in bar.get_attribute("aria-label")
+        # And by what they were for, as the session's list (#723).
+        card = page.locator(".sumpart.month .sumcard", has_text="by what they were for")
+        assert card.locator(".sumnum").all_inner_texts() == ["27%", "7%", "17%", "50%"]
+        assert "each session's smallest context" \
+            in card.locator(".sumline").first.get_attribute("title")
         # The month's bars are its charts' blue (#698): side by side, a
         # glance says which column a list is of.
         colour = "(selector) => getComputedStyle(document.querySelector(selector)).backgroundColor"
@@ -1437,7 +1444,8 @@ def test_the_month_names_its_costliest_sessions_and_turns(pair_at):
         page.evaluate("state.spend.sessions[0].days = [1, 0, 3]")
         page.evaluate("() => { const box = document.getElementById('content');"
                       " box.dataset.summaryKey = ''; draw(); }")
-        page.locator(".sumpart.month .sumline").first.hover()
+        page.locator(".sumpart.month .sumcard", has_text="costliest sessions") \
+            .locator(".sumline").first.hover()
         page.wait_for_selector(".spendmark .spendband", state="attached")
         assert page.locator(".spendsvg >> nth=0 >> .spendband").count() == 2
         assert page.locator(".spendsvg >> nth=0 >> .spendmineline").count() == 1
@@ -1508,7 +1516,7 @@ def test_the_session_s_time_and_tokens_are_charts(ws, page_at):
         lines = [[one.locator(".sumnum").inner_text(), one.locator(".sumsaid").inner_text()]
                  for one in card.locator(".sumline").all()]
         assert lines == [
-            ["50%", "the start every reply reads again: system prompt, tools, CLAUDE.md"],
+            ["50%", "the start: system prompt, tools, CLAUDE.md"],
             ["0%", "the conversation: prompts, replies, what the calls sent"],
             ["0%", "tool results kept in context"],
             ["50%", "writing the replies"]], lines
