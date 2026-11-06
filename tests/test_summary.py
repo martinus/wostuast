@@ -366,6 +366,31 @@ def test_what_the_context_cost_splits_into_the_start_the_results_and_the_rest(ws
     assert ws.summary_json(store.sessions["s1"], reader.costs)["read"] == got
 
 
+def test_the_month_s_tokens_are_split_by_what_they_were_for_as_a_session_s(ws, tmp_path):
+    """The reader asked for the session's list of what the tokens were for,
+    for the month too: the turns that began this month, of every session
+    the daemon keeps, each with its own start. A turn of last month counts
+    nothing; a month of one session is that session's split."""
+    def session(name, stamp):
+        path = tmp_path / f"{name}.jsonl"
+        path.write_text(records(
+            record("you", "look around", ts=stamp),
+            reply(record("tool", "cat big", tool_id="t1", ts=stamp), "m1",
+                  input_tokens=1000, output_tokens=100),
+            record("result", "x" * 300, tool_id="t1", ts=stamp),
+            reply(record("claude", "read it", ts=stamp), "m2",
+                  cache_read_input_tokens=1700)))
+        return ws.CostReader(path).read()
+
+    now = ws.parse_timestamp("2026-09-18T14:00:00.000Z")
+    this = session("s1", "2026-09-18T14:00:00.000Z")
+    old = session("s2", "2026-08-01T14:00:00.000Z")
+    got = ws.month_tokens_json(now, {"s1": this, "s2": old})["read"]
+    whole = this.carry.parts()
+    assert got == {key: whole[key] for key in ("start", "results", "conversation")}
+    assert got == {"start": 1100.0, "results": 60.0, "conversation": 10.0}
+
+
 def test_a_tool_result_costs_each_later_reply_until_the_context_goes(ws, tmp_path):
     """A result's tokens are its share, by its characters, of how much the
     next reply's context grew past the reply before and that reply's own

@@ -109,7 +109,13 @@ can optimize my future sessions to produce less churn".
   `Carry` counts for them; the conversation is the rest of what reading
   the context cost (`read_weight`). **Shares of the same whole as the
   bar and the results' own share**, so the numbers agree across the tab.
-  The month has no split.
+  - **The month has the split too** (`month_tokens_json`'s `read`), as
+    the reader asked: the turns that began this month, of the sessions
+    the daemon keeps, as for the month's token bar. **Each turn keeps
+    what reading its context cost** (`TurnCost.read_weight`, `read_per`,
+    `read_results`, from `Carry.read`), so a turn of last month counts
+    nothing; each session's start is its own smallest context.
+    `test_the_month_s_tokens_are_split_by_what_they_were_for_as_a_session_s`.
   `test_what_the_context_cost_splits_into_the_start_the_results_and_the_rest`,
   `test_the_session_s_time_and_tokens_are_charts`.
 - **Each subagent the daemon keeps is a line of its own** (#687,
