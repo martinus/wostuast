@@ -16457,19 +16457,30 @@ body.switching #content::after {
    session's transcript. */
 .content.agentview .turnacts { display: none; }
 .content.agentview .who .self { cursor: default; }
-/* The Statistics tab (issue 622): the numbers, then the lists; this
-   session, then all of them (issue 653). Side by side where the pane is
-   wide enough, and the lists in as many columns as fit (issue 683): one
-   column of 980 px left most of a wide screen empty, and the month's
-   charts below the fold. */
-.summary {
-  display: grid; gap: 30px 56px; align-items: start;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 620px), 1fr));
+/* The Statistics tab (issue 622): this session or all sessions this month
+   (issue 653), one at a time behind a switch, in the same three parts
+   (issue 723): the reader could not see how the lists related when both
+   stood side by side. At most two columns of cards (issue 683), so a line
+   is read across without a long jump. */
+.summary { max-width: 1100px; }
+.statswitch {
+  display: inline-flex; margin: 0 0 18px; border: 1px solid var(--edge-bright);
+  border-radius: 6px; overflow: hidden;
 }
+.statswitch > button {
+  padding: 6px 14px; border: 0; background: none; color: var(--ink-mute);
+  font: 13px var(--sans); cursor: pointer;
+}
+.statswitch > button[aria-pressed="true"] { background: var(--raised); color: var(--ink-bright); }
+.statswitch > button:hover { color: var(--ink-bright); }
+/* A part: its number and title, the question it answers, then its lists. */
+.sumgroup { margin: 28px 0 0; }
+.sumgroup > .sumsection { margin: 0 0 2px; }
+.sumgroup > .sumask { margin: 0 0 4px; font-size: 12.5px; color: var(--ink-mute); }
 .sumpart, .sumcard { min-width: 0; }
 .sumcard.wide { grid-column: 1 / -1; }
 .sumcards {
-  display: grid; gap: 0 32px; align-items: start;
+  display: grid; gap: 0 40px; align-items: start;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr));
 }
 .sumsection { margin: 0 0 12px; font-size: 15px; font-weight: 600; color: var(--ink-bright); }
@@ -16509,10 +16520,6 @@ body:has(.content[data-tab="summary"]) .findhome { display: none; }
 /* The session's time and its tokens as charts (issue 688): the times as
    a list with bars; the four kinds of token as one bar in parts, 2 px
    apart, its share inside each block that has room. */
-.sumcharts {
-  display: grid; gap: 0 32px; align-items: start;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr));
-}
 .sumchart { min-width: 0; }
 .kindbar { display: flex; gap: 2px; height: 28px; }
 .kindpart {
@@ -16548,9 +16555,6 @@ button.sumline:not(:disabled):hover { background: var(--raised); }
 .sumsub { color: var(--ink-faint); font-variant-numeric: tabular-nums; }
 .sumsaid { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sumwho { color: var(--ink-faint); }
-/* All sessions' bars in the month's colour, the session's in its own
-   (issue 698): a glance says which part a list is of. */
-.sumpart.month .sumbar { background: var(--spend); }
 /* One line of the month's lists, on its charts (issue 698): the days it
    spent, its running total and its part of each column, in the page's
    brightest ink over the month's blue. Never in the pointer's way. */
@@ -28386,28 +28390,66 @@ function drawSummary(box) {
     box.dataset.listKey = box.dataset.bodyKey = box.dataset.summaryKey = "";
   }
   const allowance = setting("allowance") || 0;
-  if (!fresh(box, "summaryKey", JSON.stringify([state.chosen, got, state.spend, allowance]))) return;
+  const view = statsView();
+  if (!fresh(box, "summaryKey",
+             JSON.stringify([state.chosen, got, state.spend, allowance, view]))) return;
   box.replaceChildren();
   const pane = put(box, "div", "summary");
-  // Two sections, as the reader asked (#653): this session, then all of
-  // them. More about all of them is to come there. Each is a column of
-  // the tab's grid, and the session's lists a grid of cards (#683).
-  const mine = put(pane, "section", "sumpart");
-  put(mine, "h2", "sumsection", "This session");
-  if (!got) {
-    put(mine, "p", "sumnote", "Reading the transcript\u2026");
-  } else {
-    putSumHead(mine, got);
-    const cards = put(mine, "div", "sumcards");
-    putCostly(cards, got);
-    putSumCarried(cards, got);
-    putSumTime(cards, got);
-    putSumAgents(cards, got);
-    putSumTools(cards, got);
+  // This session or all of them this month (#653), one at a time (#723).
+  putStatsSwitch(pane, view);
+  if (view === "month") putSpend(put(pane, "section", "sumpart month"), state.spend, allowance);
+  else putSession(put(pane, "section", "sumpart"), got);
+}
+
+// Which the Statistics tab shows, this session or all sessions this month
+// (#723), as the reader chose: one layout and a switch. Both at once were
+// one long page, and the month repeated the session's lists in another
+// colour. This browser keeps the choice, as it keeps the transcript column.
+function statsView() { return stored("wostuast-stats") === "month" ? "month" : "session"; }
+
+function putStatsSwitch(pane, view) {
+  const row = put(pane, "div", "statswitch");
+  for (const [which, words] of [["session", "This session"],
+                                ["month", "This month, all sessions"]]) {
+    const button = put(row, "button", null, words);
+    button.type = "button";
+    button.dataset.view = which;
+    button.setAttribute("aria-pressed", String(view === which));
+    button.addEventListener("click", () => {
+      store("wostuast-stats", which === "month" ? "month" : "");
+      draw();
+    });
   }
-  // `month`: its bars are the month's colour, the session's another, so a
-  // glance says which part a list is of, as the reader asked (#698).
-  putSpend(put(pane, "section", "sumpart month"), state.spend, allowance);
+}
+
+// One of the parts both views share (#723), numbered, with the question it
+// answers under its title: the reader could not tell what a list was for,
+// or how it related to the one beside it.
+function putSumPart(parent, number, title, question) {
+  const part = put(parent, "section", "sumgroup");
+  put(part, "h2", "sumsection", number + "  " + title);
+  put(part, "p", "sumask", question);
+  return part;
+}
+
+// This session (#622), in the parts the month has too (#723): what it
+// cost, where the money went, where the time went. The month has no
+// third: the status lines keep no time.
+function putSession(part, got) {
+  if (!got) { put(part, "p", "sumnote", "Reading the transcript\u2026"); return; }
+  putSumHead(part, got);
+  putSumKinds(putSumPart(part, 1, "What it cost", "How the dollars split by kind of"
+                         + " token: output costs most, a cache read least."), got);
+  const money = put(putSumPart(part, 2, "Where the money went", "The turns and the tool"
+                               + " results that cost the most. \u2248 is a share of what"
+                               + " the session spent."), "div", "sumcards");
+  putCostly(money, got);
+  putSumCarried(money, got);
+  const time = put(putSumPart(part, 3, "Where the time went", "How long the session ran,"
+                              + " what its tools took, and its subagents."), "div", "sumcards");
+  putSumClock(time, got);
+  putSumTime(time, got);
+  putSumRuns(time, current());
 }
 
 // A bar as long as its share of the most in its list, in the column after
@@ -28447,7 +28489,6 @@ function putStat(head, value, what, title) {
 // as each status line says them, and the way to the allowance the reader
 // set. Shown, never enforced: a spend limit is a non-goal.
 function putSpend(pane, spend, allowance) {
-  put(pane, "h2", "sumsection", "All sessions this month");
   if (!spend) { put(pane, "p", "sumnote", "Reading the status lines\u2026"); return; }
   if (!spend.since) {
     put(pane, "p", "sumnote", "Nothing kept yet. From now on, each status line keeps"
@@ -28474,14 +28515,18 @@ function putSpend(pane, spend, allowance) {
       + spendDay(spend.since) + "."
       + (allowance ? "" : " Set a monthly allowance in the settings to see the way to it."));
   if (!allowance) note.title = ALLOWANCE_WHERE;
-  put(pane, "h3", "sumtitle", "spent so far");
-  const run = putSpendRun(pane, spend, allowance, pace);
-  put(pane, "h3", "sumtitle", "each day");
-  const charts = { run, each: putSpendDays(pane, spend) };
+  const cost = putSumPart(pane, 1, "What it cost", "What all sessions spent each day,"
+                          + " the way to the month's end, and the split by kind of token.");
+  put(cost, "h3", "sumtitle", "spent so far");
+  const run = putSpendRun(cost, spend, allowance, pace);
+  put(cost, "h3", "sumtitle", "each day");
+  const charts = { run, each: putSpendDays(cost, spend) };
   // The session's bar of what its tokens cost, for the whole month (#722):
   // the turns that began this month, of the sessions the daemon keeps.
-  putSumKinds(pane, spend.kinds || {});
-  const cards = put(pane, "div", "sumcards");
+  putSumKinds(cost, spend.kinds || {});
+  const cards = put(putSumPart(pane, 2, "Where the money went", "The sessions, the turns"
+                               + " and the tool results that cost the most this month."),
+                    "div", "sumcards");
   putMonthSessions(cards, spend.sessions || [], charts);
   putMonthTurns(cards, spend.turns || [], charts);
   putMonthCarried(cards, spend.carried, charts, spent);
@@ -28832,9 +28877,6 @@ function putSumHead(pane, got) {
   if (got.lines_added || got.lines_removed) {
     stat("+" + (got.lines_added || 0) + " \u2212" + (got.lines_removed || 0), "lines");
   }
-  const charts = put(pane, "div", "sumcharts");
-  putSumClock(charts, got);
-  putSumKinds(charts, got);
 }
 
 // Where the session's time went (#688): how long it has run, how long it
@@ -29015,22 +29057,6 @@ function callTime(seconds) {
   return Math.floor(whole / 60) + "min" + (whole % 60 ? " " + whole % 60 + "s" : "");
 }
 
-function putSumAgents(pane, got) {
-  const kinds = got.subagents;
-  if (!kinds.length) return;
-  const list = put(putSumCard(pane, "subagents"), "div", "sumlist");
-  for (const one of kinds) {
-    const line = put(list, "div", "sumline");
-    put(line, "span", "sumnum", "\u00d7" + one.ran);
-    const parts = [counted(one.calls, "call", "calls")];
-    if (one.tokens) parts.push(roughly(one.tokens) + " tokens");
-    if (one.seconds) parts.push(lasted(one.seconds));
-    put(line, "span", "sumsub", parts.join(" \u00b7 "));
-    put(line, "span", "sumsaid", one.kind);
-  }
-  putSumRuns(pane, current());
-}
-
 // Each subagent the daemon keeps, the newest first (#687): a line a kind
 // said only how many ran, not what each did. How long it ran, a bar on one
 // scale, then its kind, its task, its calls and tokens; its last words on
@@ -29044,7 +29070,7 @@ function putSumRuns(pane, s) {
   const most = Math.max(...runs.map(took)) || 1;
   // The whole row of the grid: a task is a sentence, and half a card cut
   // it to its first words.
-  const card = putSumCard(pane, "each subagent");
+  const card = putSumCard(pane, "subagents");
   card.classList.add("wide");
   if ((s.agents_ran || 0) > runs.length) {
     put(card, "p", "sumnote", "The last " + runs.length + " of the " + s.agents_ran + " that ran.");
@@ -29059,20 +29085,6 @@ function putSumRuns(pane, s) {
     put(line, "span", "sumsaid", parts.filter(Boolean).join(" \u00b7 "));
     line.title = (one.said ? one.said + "\n\n" : "") + "open its transcript";
     line.addEventListener("click", () => openAgent(s.id, one));
-  }
-}
-
-// Calls by tool, each with a bar as long as its share of the most.
-function putSumTools(pane, got) {
-  const tools = got.tools;
-  if (!tools.length) return;
-  const list = put(putSumCard(pane, "calls by tool"), "div", "sumlist");
-  const most = tools[0][1];
-  for (const [name, count] of tools) {
-    const line = put(list, "div", "sumline");
-    put(line, "span", "sumnum", String(count));
-    putSumBar(line, count / most);
-    put(line, "span", "sumsaid", name);
   }
 }
 

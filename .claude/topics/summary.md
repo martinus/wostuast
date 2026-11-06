@@ -51,16 +51,24 @@ can optimize my future sessions to produce less churn".
   only a fill asks for a landing. A subagent's line still opens its own
   transcript on the Transcript tab: that is no place in this one.
   `test_the_tool_results_kept_in_context_link_to_their_calls`.
-- **The tab is "Statistics", in two sections: this session, then all
-  sessions this month** (#653, `drawSummary`, `putSpend`), as the reader
-  asked; more about all sessions is to come there (#698 named its costliest
-  sessions and turns). Its key in the code
-  stays `summary`.
-  - **The sections stand side by side where the pane is wide enough, and
-    the session's lists are cards in a grid** (#683, `.sumpart`,
-    `.sumcards`, `putSumCard`): one column of 980 px left most of a wide
-    screen empty, and the month's charts below the fold. Both grids are
-    `auto-fit`, so a narrow pane gets one column with no media query.
+- **The tab is "Statistics": this session or all sessions this month, one
+  at a time behind a switch** (#653, #723, `drawSummary`, `statsView`,
+  `putStatsSwitch`, `putSession`, `putSpend`), as the reader chose from
+  pictures: side by side, the reader could not see how the lists related
+  or which mattered, and the month repeated the session's lists in another
+  colour. This browser keeps the choice (`wostuast-stats`). Its key in the
+  code stays `summary`.
+  - **Both views have the same numbered parts, each with the question it
+    answers** (`putSumPart`, `.sumgroup`, `.sumask`): what it cost, where
+    the money went, where the time went. The month has no third: the
+    status lines keep no time.
+  - **No list says again what another says**: "calls by tool" went, as
+    time by tool counts each tool's calls; the subagents by kind went, as
+    the line each subagent has says its kind.
+  - **At most two columns of cards, 1100 px wide** (#683, `.summary`,
+    `.sumcards`, `putSumCard`): a line is read across without a long jump.
+    The grid is `auto-fill`, so a narrow pane gets one column with no
+    media query.
     `test_the_statistics_tab_uses_a_wide_screen`.
 - **The session's time and tokens are charts, not tiles** (#688,
   `putSumClock`, `putSumKinds`, `TOKEN_KINDS`, `weighted`): the reader
@@ -76,9 +84,9 @@ can optimize my future sessions to produce less churn".
   validator passed for colour blindness on both surfaces; each block says
   its share where it has room, and a key names the kinds.
   `test_the_session_s_time_and_tokens_are_charts`.
-- **Each subagent the daemon keeps is a line of its own, under the line
-  a kind** (#687, `putSumRuns`, `.sumcard.wide`): a line a kind said only
-  how many ran. The newest first: how long it ran ("running" while it
+- **Each subagent the daemon keeps is a line of its own** (#687,
+  `putSumRuns`, `.sumcard.wide`, "subagents"): a line a kind said only
+  how many ran, and it went (#723). The newest first: how long it ran ("running" while it
   runs), a bar on one scale, its kind, its task, its calls and tokens;
   its last words on the hover, and a click opens its own transcript
   (`openAgent`), as its line under the row does. They come from the row's
@@ -128,9 +136,8 @@ can optimize my future sessions to produce less churn".
     `test_the_month_s_tool_results_kept_in_context_and_by_tool` (both
     files), `test_the_daemon_reads_the_month_s_turns_of_the_sessions_it_keeps`.
 - **Every list of the tab has a bar a line, drawn one way, `putSumBar`**
-  (#685): time by tool, calls by tool, the costliest turns and the
-  slowest calls, each as long as its share of the most in its list. A
-  costly turn's bar is its weight, sent as `weight` in `costly`: its
+  (#685): time by tool, the costliest turns and the slowest calls, each
+  as long as its share of the most in its list. A costly turn's bar is its weight, sent as `weight` in `costly`: its
   dollars are `None` when the status line says no cost. The bar takes
   the column after the number, so a call's tool goes before its target,
   and **a turn's tokens go on the line's hover**, as the reader chose:
@@ -198,8 +205,10 @@ can optimize my future sessions to produce less churn".
     real transcripts the turns were the same and the read 10 to 30 times
     faster: 65 MB in 0.3 s. The readers are kept by path (`cost_readers`),
     read on from where they stopped, under `spend_lock`.
-  - **The month's bars are its charts' blue, the session's amber** (`.sumpart.month
-    .sumbar`), as the reader asked: a glance says which part a list is of.
+  - **Every list's bars are one colour, the session's and the month's**
+    (#723): one view shows at a time, so no second colour has to say
+    which a list is of. The month's own blue (#698) went with the two
+    sections side by side.
   - **A hover or the focus on a line marks its days on both charts**
     (`markSpend`, a session's `days`, a turn's `day`), as the reader asked:
     a band behind each day it spent, its running total with its amount at

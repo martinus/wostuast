@@ -251,7 +251,7 @@ where you left it: the tab, the open file, and your place in it.
 | **Transcript** | What the agent said and did, with a map of the conversation beside it. For a session that is over, the command that brings it back (`claude --resume`), to copy. |
 | **Files** | Every file in the worktree as a tree, with syntax colour and go-to-file. |
 | **Review** | What changed, file by file, with your comments on it and the bar to send them. |
-| **Statistics** | Where the session's tokens and time went: what it spent, how long it was busy, its costliest turns, the tool results that stayed in context longest, its subagents and its calls by tool. Under it, what all sessions spent each day this month, and the way to your allowance. |
+| **Statistics** | This session, or all sessions this month, behind a switch: what it cost, where the money went (the costliest turns, the tool results that stayed in context longest), and for a session where the time went (by tool, the slowest calls, the subagents). The month adds what was spent each day, and the way to your allowance. |
 
 When a switch to another session or tab takes a moment, for example over a
 slow ssh tunnel, the old content dims and a label says what is loading. The
@@ -442,16 +442,22 @@ words marked.
 
 #### Statistics
 
-First, this session. What the session spent, as Claude Code estimates it, its
-turns, and the lines its edits added and removed. Under them, two charts. The
-time chart shows how long the session has run, how long it was busy (from each
-prompt to the end of its turn) and how long the model worked, a line each with
-a bar on one scale. The tokens chart is one bar in four parts: output, cache written, input
-and cache read. Each part is as wide as its share of what the tokens cost, so
-a million cache reads show as the tenth of the price they cost. The key under
-it says how many tokens of each kind the session used.
+A switch at the top shows **This session** or **This month, all sessions**.
+Your browser keeps your choice. Both views show the same parts in the same
+order, and each part answers one question:
 
-Then its costliest turns. A turn's share of what was spent is marked
+1. **What it cost.** The tokens as one bar in four parts: output, cache
+   written, input and cache read. Each part is as wide as its share of what
+   the tokens cost, so a million cache reads show as the tenth of the price
+   they cost. The key under it says how many tokens of each kind were used.
+2. **Where the money went.** The costliest turns, and the tool results kept
+   in context.
+3. **Where the time went.** Only for one session: the month keeps no time.
+
+**This session.** At the top, what the session spent, as Claude Code
+estimates it, its turns, and the lines its edits added and removed.
+
+In part 2, the costliest turns. A turn's share of what was spent is marked
 "≈": the status line says only the whole, so each turn gets its share by
 the tokens its replies used, output weighing most and a cache read least.
 Click a turn to read it in the transcript beside the tab. The transcript
@@ -467,36 +473,34 @@ whether the result is still in context. Click it to read the call in the
 transcript beside the tab. Use the list to find the calls to make smaller: a narrower
 `grep`, a `sed -n` of the part you need, a `head` on a long log.
 
-Then the time by tool: how long
-each tool's calls ran, not the time a dialog waited for your answer. Then
-its slowest calls, of a second or more; click one to read it in the
-transcript beside the tab. Then its subagents by kind, and then each subagent, the newest
-first: how long it ran, its kind, its task, its calls and tokens. Point at one
-to read its last words, and click it to read its own transcript. Then its calls
-by tool.
+In part 3, how long the session has run, how long it was busy (from each
+prompt to the end of its turn) and how long the model worked. Then the time
+by tool: how long each tool's calls ran, and how many calls, not the time a
+dialog waited for your answer. Then its slowest calls, of a second or more;
+click one to read it in the transcript beside the tab. Then its subagents,
+the newest first: how long each ran, its kind, its task, its calls and
+tokens. Point at one to read its last words, and click it to read its own
+transcript.
 
-Then all sessions, this calendar month: what they spent, what they spent
-today, and what the month comes to at this pace. Two charts show the
-running total and what each day cost. Point at a day to read its amount.
-Set an **allowance** in the settings to see it as a line, and how much is
-left or over. The page only shows it: nothing stops an agent.
+**This month, all sessions.** At the top, what they spent, what they spent
+today, and what the month comes to at this pace.
 
-Under the charts, a bar shows what the month's tokens cost, by kind, as
-the bar for one session does: output, cache written, input and cache read.
+In part 1, two charts show the running total and what each day cost. Point
+at a day to read its amount. Set an **allowance** in the settings to see it
+as a line, and how much is left or over. The page only shows it: nothing
+stops an agent. Under the charts, the bar of what the month's tokens cost.
 It counts the turns that began this month, of the sessions that wostuast
 still keeps.
 
-Under it are the costliest sessions of the month, by what each
-spent this month, and the costliest turns of all sessions. Point at one to
-see on the charts the days it spent. Click a session to see its own
-statistics. Click a turn to read it in its transcript, beside the tab. The turns come only
-from the sessions that wostuast still keeps.
-
-Then the tool results of the month that cost the most while they stayed in
-context, as for one session, with the name of each session. Click one to
-read the call in its session's transcript. Under them, what all those
-results cost by tool: there you see a habit, for example the same files
-read at the start of every session.
+In part 2, the costliest sessions of the month, by what each spent this
+month, and the costliest turns of all sessions. Point at one to see on the
+charts the days it spent. Click a session to see its own statistics. Click
+a turn to read it in its transcript, beside the tab. The turns come only
+from the sessions that wostuast still keeps. Then the tool results of the
+month that cost the most while they stayed in context, with the name of
+each session. Click one to read the call in its session's transcript. Under
+them, what all those results cost by tool: there you see a habit, for
+example the same files read at the start of every session.
 
 Each status line keeps what its session spent, a day at a time, from the
 day you installed this version. A day's spend is how much each session's
