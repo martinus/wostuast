@@ -295,6 +295,13 @@ lines and icons, the chosen row, the grip, drags, folds, rows kept.
     `.foldlist .findslot > .fold` hit the session list's slot too; use
     `.foldlist .content.split > .side > .findslot`.
     `test_a_fold_button_stays_where_it_was_pressed`.
+  - **Folded, a split tab's list says what it holds** (#719, `LIST_WORDS`,
+    `putFoldWord`, `.foldword`), as the reader asked: "Turns", "Files",
+    "Changed files", "Commands", under the button and read upwards, as the
+    folded transcript column says "Transcript". A click on it opens the
+    list. **It comes after `split`'s four parts**, which `split` hands back
+    by their places: second, it took the list's count.
+    `test_a_folded_list_says_what_it_holds`.
   - **A folded column's edge drags nothing** (`pointer-events: none`).
   - **`f` and `/` unfold the column they type into**: a `display: none`
     column takes no focus.

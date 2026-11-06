@@ -221,9 +221,15 @@ the loaders.
     pressed (#710): the fold's icon says the state.
   - **The button stands `--fold-in` from the column's right edge, open or
     folded** (#492): the head is built again for each, and the strip's
-    keeps its transparent rule, or it stood a pixel off. **Over the strip,
-    the tab row ends where the bars end** (`body.chatstrip .tabs`): every
-    line's right-hand controls end on one line (topics/settings).
+    keeps its transparent rule, or it stood a pixel off. **The tab row ends
+    where this button ends, `--fold-in` from the window's edge, open or
+    folded, on every tab** (#718, `.tabs`), as the reader asked: it ended
+    where the bar under it ended, and that bar ends with the column, so a
+    fold moved the model, the cost and jump 34 px.
+    `test_the_tab_row_ends_with_the_fold_button_and_every_bar_is_one_height`.
+  - **Folded, its word reads upwards** (#719, `transform: rotate(180deg)`),
+    as the reader asked, as the folded lists' words and the session tiles
+    read.
   - **The list column's width is `--list-col`, said once** (#709): beside
     the transcript the grid had columns of its own with the open width,
     and a folded list left that much empty.
@@ -246,8 +252,13 @@ the loaders.
     `test_the_transcript_column_is_as_wide_as_its_edge_is_dragged`.
   - **Its head's rule lines up with the bar beside it** (`fitChatHead`, in
     `land`): it stood 4 px above the commit picker's, and the reader saw it.
-    Measured, not set: Review's bar and the Files tab's path (which wraps)
-    differ. `test_the_transcript_column_s_head_lines_up_with_the_bars_beside_it`.
+    Measured, not set: the Files tab's path wraps, and its bar grows.
+  - **Every bar with buttons is `--bar-h` tall, the tab row's 40 px**
+    (#720): the tab row, the session list's head, a find box's row, the
+    Files tab's file line, the Review bar and this column's head. The Files
+    bar stood 47 px tall and the Review bar 43, so a switch between the
+    two moved this column's head, as the reader saw. A bar that wraps
+    grows past it. `test_the_transcript_column_s_head_lines_up_with_the_bars_beside_it`.
   `test_the_transcript_stands_beside_the_review_and_follows_the_agent`,
   `test_the_transcript_is_never_beside_itself`.
 - **No JavaScript library is vendored.** `marked` and `highlight.js` come

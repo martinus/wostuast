@@ -1581,7 +1581,8 @@ def test_every_right_hand_control_ends_on_one_line(repo_page):
     bar's 16, the commit message's md / txt 20, and the reader saw edges
     where one was meant. They end on one line now (`--line-end`), and what
     stands in the scrolling pane takes the scrollbar's room off, so it
-    holds with a scrollbar or without. The read-as words are md and txt."""
+    holds with a scrollbar or without. The read-as words are md and txt.
+    The tab row ends with the transcript column's fold button (#718)."""
     root, _ = repo_page
     tabbed_change(root)
     conftest.git_in(root, "add", "-A")
@@ -1595,8 +1596,9 @@ def test_every_right_hand_control_ends_on_one_line(repo_page):
           ['bar', '.diffbar .quick'],
           ['message', '.diffhead .readas'], ['card', '.dfile']].map(([name, sel]) =>
           [name, document.querySelector(sel).getBoundingClientRect().right]))""")
-        edges["tabs"] = page.evaluate(TABS_END)
         assert max(edges.values()) - min(edges.values()) < 1, edges
+        assert abs(page.evaluate(TABS_END) - page.evaluate(
+            "document.getElementById('chatfold').getBoundingClientRect().right")) < 1
         readas = page.locator(".diffhead .readas")
         assert readas.inner_text() == "txt"
         assert readas.get_attribute("title") == "show the message as it was written: off"

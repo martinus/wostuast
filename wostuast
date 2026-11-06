@@ -15829,6 +15829,12 @@ body {
    the button stands where it stood. Its edge drags nothing while it is
    folded: a drag would set a width nobody can see. */
 :root { --fold-w: 34px; --fold-in: 4px; }
+/* The height of every bar with buttons (issue 720): the tab row, the
+   session list's head, the find box's row, the Files tab's file line, the
+   Review bar and the transcript column's head. The Files bar stood 47 px
+   tall and the Review bar 43, so a switch between the two tabs moved the
+   transcript column's head by 4 px. A bar that wraps grows past it. */
+:root { --bar-h: 40px; }
 /* The fold button is a bare icon beside a box, never a second box (issue
    469): a box of the same height with an edge of its own read as the find
    box's twin, not quite the same. A ring shows on the hover. It stands
@@ -15849,7 +15855,7 @@ body {
 .foldsessions .sidebar > :not(.findslot, .sidebar-head, .rows),
 .foldsessions .sidebar-head > :not(.setslot),
 .foldsessions .sidebar .findslot > :not(.fold),
-.foldlist .content.split > .side > :not(.findslot),
+.foldlist .content.split > .side > :not(.findslot, .foldword),
 .foldlist .content.split > .side > .findslot > :not(.fold) { display: none; }
 /* Folded, the head holds the settings alone, in the middle of the strip
    (issue 702): the logo says nothing the strip needs, and the settings
@@ -15940,7 +15946,7 @@ body.dragging.rowdrag { cursor: row-resize; }
 /* No margin under it: the filter box then stands on the line of the find
    box beside it, 8 px higher than it stood (issue 469). */
 .sidebar-head {
-  height: 40px; flex-shrink: 0; display: flex; align-items: center;
+  height: var(--bar-h); flex-shrink: 0; display: flex; align-items: center;
   gap: 10px; padding: 0 16px;
   border-bottom: 1px solid var(--edge); font-family: var(--mono); font-size: 13px;
 }
@@ -16582,10 +16588,6 @@ body.sidechat .main {
 body.chatstrip .main {
   grid-template-columns: var(--list-col) var(--split-grip-w) minmax(0, 1fr) var(--fold-w);
 }
-/* The tab row's controls end where the bars under them end, on one line
-   (`--line-end`, topics/settings), so not over the strip: it is a column
-   of its own (issue 712). */
-body.chatstrip .tabs { padding-right: calc(var(--fold-w) + var(--line-end)); }
 /* Its edge drags its width (issue 641), over the column's border. */
 .chat > .chatgrip {
   position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; z-index: 4;
@@ -16611,16 +16613,22 @@ body.chatstrip .tabs { padding-right: calc(var(--fold-w) + var(--line-end)); }
    and the button a pixel off where it stood open (issue 492). */
 body.chatstrip .chat > .chathead { padding: 6px 0; border-bottom-color: transparent; }
 body.chatstrip .chat > .chathead > b { display: none; }
-.chat > .chatword {
-  align-self: center; writing-mode: vertical-rl; margin-top: 4px;
-  font: 12px var(--sans); color: var(--ink-mute); cursor: pointer;
+/* Read upwards, as on a book's spine and as the folded session list's
+   tiles read (issue 719): the reader asked for it the other way round. */
+.chat > .chatword, .side > .foldword {
+  align-self: center; writing-mode: vertical-rl; transform: rotate(180deg);
+  margin-top: 4px; font: 12px var(--sans); color: var(--ink-mute); cursor: pointer;
 }
+/* Only while the list is folded (issue 719), under its button. */
+.side > .foldword { display: none; order: 1; }
+.foldlist .content.split > .side > .foldword { display: block; }
 /* The question bar and the send box stand under the transcript, in its
    column (`paintChat` moves them in): left in `.main`'s rows, they kept an
    empty strip under the tab's pane. */
 .chat > :is(.asking, .sendbar) { position: relative; flex-shrink: 0; }
 .chat > .chathead {
-  display: flex; align-items: center; gap: 8px; padding: 6px 0 6px 16px;
+  display: flex; align-items: center; gap: 8px; min-height: var(--bar-h);
+  padding: 6px 0 6px 16px;
   box-sizing: border-box; flex-shrink: 0;
   border-bottom: 1px solid var(--edge); font: 12px var(--sans); color: var(--ink-mute);
 }
@@ -16767,8 +16775,12 @@ body.chatstrip .chat > .chathead > b { display: none; }
 /* A query container (issue 397): how much room the tab row has depends on
    the sidebar's width as well as the window's, so the row asks itself. */
 .tabs {
-  height: 40px; flex-shrink: 0; display: flex; align-items: stretch; gap: 4px;
-  padding: 0 var(--line-end) 0 24px; border-bottom: 1px solid var(--edge);
+  height: var(--bar-h); flex-shrink: 0; display: flex; align-items: stretch; gap: 4px;
+  /* Its controls end `--fold-in` from the window's edge, where the
+     transcript column's fold button ends, open or folded (issue 718), as
+     the reader asked: they ended where the bar under them ended, and the
+     bar ends with the column beside it, so a fold moved them 34 px. */
+  padding: 0 var(--fold-in) 0 24px; border-bottom: 1px solid var(--edge);
   font-family: var(--sans); font-size: 13px; container-type: inline-size;
 }
 /* A name on one line (issue 397): at 1024 px "1 Transcript" broke over two,
@@ -17347,8 +17359,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 }
 .goto .lit { color: var(--needs-warm); font-weight: 600; }
 .goto .nohits { padding: 10px 12px; }
-.findslot { flex-shrink: 0; display: flex; padding: 8px 10px;
-  border-bottom: 1px solid var(--edge); }
+.findslot { flex-shrink: 0; display: flex; align-items: center;
+  min-height: var(--bar-h); padding: 0 10px; border-bottom: 1px solid var(--edge); }
 .findslot .find { width: 100%; }
 /* The find box and the count under it are one head, and the count's line
    closes it: a line between them was the second of two 27 px apart, and
@@ -17602,7 +17614,7 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
 }
 .diffbar {
   flex-shrink: 0; display: flex; align-items: center; gap: 8px;
-  padding: 8px var(--line-end) 8px 16px; background: var(--bg);
+  min-height: var(--bar-h); padding: 6px var(--line-end) 6px 16px; background: var(--bg);
   border-bottom: 1px solid var(--edge);
 }
 /* The narrow face, as file names wear: branch names and commit subjects
@@ -17655,8 +17667,8 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
    how it is drawn. It is outside the scroller, so it stays in view in both
    directions without being sticky in either. */
 .filebody > .where {
-  flex-shrink: 0; padding: 12px var(--line-end) 12px 26px; gap: 14px;
-  display: flex; align-items: baseline; flex-wrap: wrap;
+  flex-shrink: 0; min-height: var(--bar-h); padding: 6px var(--line-end) 6px 26px;
+  gap: 14px; display: flex; align-items: baseline; flex-wrap: wrap; align-content: center;
   background: var(--bg); border-bottom: 1px solid var(--edge);
 }
 .filebody .where .link { margin-top: 0; flex-shrink: 0; }
@@ -24023,6 +24035,19 @@ function sendHome() {
   homePlaces($("placehome"));
 }
 
+// What a folded list column says it holds (issue 719), read downwards
+// under its button, as the folded transcript column says "Transcript":
+// the reader asked, as a strip with a button alone said nothing.
+const LIST_WORDS = { transcript: "Turns", files: "Files", diff: "Changed files",
+                     commands: "Commands" };
+
+function putFoldWord(side, words, fold) {
+  if (!words) return;
+  const word = put(side, "div", "foldword", words);
+  word.title = "show this list";
+  word.addEventListener("click", () => fold.click());
+}
+
 function split(box, tab, bodyClass) {
   if (box.dataset.tab !== tab) {
     sendHome();                // it may be inside what is about to be cleared
@@ -24031,7 +24056,7 @@ function split(box, tab, bodyClass) {
     box.dataset.listKey = "";
     box.dataset.bodyKey = "";
     const side = put(box, "div", "side");
-    putFold(put(side, "div", "findslot"), "list");
+    const fold = putFold(put(side, "div", "findslot"), "list");
     put(side, "div", "listnote");    // how many, or why there are none
     // Only the Files tab's list is windowed, and it is the only one whose
     // rows are all one height. A diff row carries a second line of counts, so
@@ -24052,6 +24077,9 @@ function split(box, tab, bodyClass) {
     // Under the list and pinned there, for what must stay in reach however
     // far the list scrolls. The count strip above it is one clipped line.
     put(side, "div", "sidefoot");
+    // After the four parts `split` hands back by their places; `order`
+    // stands it under the button.
+    putFoldWord(side, LIST_WORDS[tab], fold);
     dragWidth(put(box, "div", "grip"), "--side-w", 150, 700);
     put(box, "div", bodyClass);
     // The Transcript tab's way back to the end, built here with the rest of
