@@ -454,6 +454,8 @@ order, and each part answers one question:
    in context.
 3. **Where the time went.** Only for one session: the month keeps no time.
 
+Point at the title of a list to read how it is counted.
+
 **This session.** At the top, what the session spent, as Claude Code
 estimates it, its turns, and the lines its edits added and removed.
 
@@ -467,7 +469,7 @@ Then the tool results kept in context. Each later reply reads a tool's
 result again, until a compaction or a `/clear`, so a large result read early
 in a session can cost more than the turn that asked for it. A line says the
 result's tokens, times the replies that read them, the tool and its target,
-and "≈" what that cost. The note above the list says what all results
+and "≈" what that cost. The line above the list says what all results
 together cost, as a share of what the session spent. Point at a line to see
 whether the result is still in context. Click it to read the call in the
 transcript beside the tab. Use the list to find the calls to make smaller: a narrower
@@ -475,8 +477,8 @@ transcript beside the tab. Use the list to find the calls to make smaller: a nar
 
 In part 3, how long the session has run, how long it was busy (from each
 prompt to the end of its turn) and how long the model worked. Then the time
-by tool: how long each tool's calls ran, and how many calls, not the time a
-dialog waited for your answer. Then its slowest calls, of a second or more;
+and calls by tool: how long each tool's calls ran, and how many calls, not
+the time a dialog waited for your answer. Then its slowest calls, of a second or more;
 click one to read it in the transcript beside the tab. Then its subagents,
 the newest first: how long each ran, its kind, its task, its calls and
 tokens. Point at one to read its last words, and click it to read its own

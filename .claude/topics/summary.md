@@ -33,7 +33,8 @@ can optimize my future sessions to produce less churn".
   (`Daemon.summary`): a deep copy of the counts, every message id with
   them, cost 64 ms a poll on a long session.
 - **The dollars hold the subagents' too**, which the main transcript's
-  tokens do not: the note under the turns says the shares grow with them.
+  tokens do not: the hover of the turns' title says the shares grow with
+  them.
 - **The tab is one column, not a split tab** (`box.className`,
   `.summarybox`): under `content split` the summary stood in the list's
   narrow column. It takes the box as `split` does (`dataset.tab`, the find
@@ -62,6 +63,12 @@ can optimize my future sessions to produce less churn".
     answers** (`putSumPart`, `.sumgroup`, `.sumask`): what it cost, where
     the money went, where the time went. The month has no third: the
     status lines keep no time.
+  - **A list's note is one short line, or none; the whole explanation is
+    on a hover of its title** (`putSumNote`, `.sumtitle.explained`): notes
+    of two and three lines over every list were most of what the tab said.
+    A number the reader acts on, such as what all results kept in context
+    cost, stays in the short line.
+    `test_the_tool_results_kept_in_context_link_to_their_calls`.
   - **No list says again what another says**: "calls by tool" went, as
     time by tool counts each tool's calls; the subagents by kind went, as
     the line each subagent has says its kind.
