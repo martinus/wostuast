@@ -360,7 +360,7 @@ def test_what_the_context_cost_splits_into_the_start_the_results_and_the_rest(ws
     assert got == {"start": 1100.0, "results": 60.0, "conversation": 10.0,
                    "start_tokens": 1000}
     # Each reply's context and its results, for the chart reply by reply.
-    assert ws.CostReader(path).read().carry.points == [(1000, 0), (1700, 600)]
+    assert [point[:2] for point in ws.CostReader(path).read().carry.points] == [(1000, 0), (1700, 600)]
     reader = ws.Transcript(str(path))
     reader.read_new()
     store = ws.Store()
@@ -397,12 +397,12 @@ def test_the_context_chart_gets_every_reply_or_an_even_few(ws):
     """A long session has thousands of replies, and a chart a few hundred
     pixels wide shows no more: every `every`-th reply, and the last, no
     more than `CONTEXT_POINTS`."""
-    carry = ws.Carry(points=[(1000 + at, at) for at in range(1000)], least=1000)
+    carry = ws.Carry(points=[(1000 + at, at, at // 100) for at in range(1000)], least=1000)
     got = ws.context_json(carry)
     assert (got["every"], got["replies"], got["least"]) == (4, 1000, 1000)
     assert got["points"][0] == [1000, 0] and got["points"][-1] == [1999, 999]
     assert len(got["points"]) <= ws.CONTEXT_POINTS
-    few = ws.context_json(ws.Carry(points=[(5, 1), (6, 2)], least=5))
+    few = ws.context_json(ws.Carry(points=[(5, 1, 0), (6, 2, 0)], least=5))
     assert few["points"] == [[5, 1], [6, 2]] and few["every"] == 1
 
 

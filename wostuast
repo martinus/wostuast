@@ -4975,9 +4975,10 @@ class Carry:
     least: int = 0
     read_weight: float = 0.0
     live_tokens: float = 0.0    # the tokens of the results in context now
-    #: Each reply's context, and how much of it was tool results, for the
-    #: chart of the context reply by reply.
-    points: list[tuple[int, int]] = field(default_factory=list)
+    #: Each reply's context, how much of it was tool results, and its turn
+    #: (an index into `Costs.turns`), for the chart of the context reply by
+    #: reply.
+    points: list[tuple[int, int, int]] = field(default_factory=list)
 
     def called(self, record: dict[str, Any], blocks: list["Block"]) -> None:
         """A reply's calls, kept until their results come. Its target is
@@ -5034,7 +5035,7 @@ class Carry:
                 one.chars = int(len(line) / len(answered) / RAW_PER_CHAR)
                 self.waiting.append(one)
 
-    def read(self, used: dict[str, Any]) -> tuple[float, float, float] | None:
+    def read(self, used: dict[str, Any], turn: int = 0) -> tuple[float, float, float] | None:
         """One reply, counted once: what it read, and what came in before it.
         Hands back what reading its context cost, that a token, and what
         the tool results in it cost, for its turn; None for no context."""
@@ -5060,7 +5061,7 @@ class Carry:
         self.read_sum += weight / context
         self.read_weight += weight
         self.least = min(self.least, context) if self.least else context
-        self.points.append((context, round(self.live_tokens)))
+        self.points.append((context, round(self.live_tokens), turn))
         self.read_n += 1
         out = used.get("output_tokens")
         self.last_context, self.last_out = context, out if isinstance(out, int) else 0
@@ -5130,10 +5131,10 @@ class Costs:
         if not mid or mid in self.seen or not isinstance(used, dict):
             return
         self.seen.add(mid)
-        read = self.carry.read(used)
         if not self.turns:
             self.turns.append(TurnCost(said="(before the first prompt)"))
         turn = self.turns[-1]
+        read = self.carry.read(used, len(self.turns) - 1)
         turn.replies += 1
         if read:
             turn.read_weight += read[0]
@@ -10494,18 +10495,28 @@ def carried_json(carry: Carry, cost: float | None, total: float) -> dict[str, An
 CONTEXT_POINTS = 300
 
 
-def context_json(carry: Carry) -> dict[str, Any]:
+def context_json(carry: Carry, turns: Sequence[TurnCost] = ()) -> dict[str, Any]:
     """Each reply's context and its tool results, for the chart of the
     context reply by reply, as the reader asked: why reading it again is
     most of what a session costs. Every `every`-th reply, and the last, so
     no more than `CONTEXT_POINTS`. `least` is the start every reply reads
-    again, as in `Carry.parts`."""
+    again, as in `Carry.parts`.
+
+    `turns` are the points each turn begins at, as the reader asked to see
+    the turns on the chart: its first point (`at`), and its prompt for a
+    hover and a link. A turn none of whose replies is kept has none."""
     every = max(1, -(-len(carry.points) // CONTEXT_POINTS))
     kept = carry.points[::every]
     if carry.points and (len(carry.points) - 1) % every:
         kept.append(carry.points[-1])
-    return {"points": [list(one) for one in kept], "every": every, "least": carry.least,
-            "replies": len(carry.points)}
+    spans: list[dict[str, Any]] = []
+    for at, (_, _, turn) in enumerate(kept):
+        if spans and spans[-1]["turn"] == turn:
+            continue
+        one = turns[turn] if turn < len(turns) else TurnCost()
+        spans.append({"at": at, "turn": turn, "seq": one.seq, "said": one.said, "ts": one.ts})
+    return {"points": [[context, results] for context, results, _ in kept], "every": every,
+            "least": carry.least, "replies": len(carry.points), "turns": spans}
 
 
 def tokens_json(turns: Iterable[TurnCost]) -> dict[str, dict[str, Any]]:
@@ -10549,17 +10560,20 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
                    for turn in worst if turn.weight],
         # Every turn in order, the last `CONTEXT_POINTS`, for the chart of
         # the session's cost turn by turn, beside the month's each day.
-        "each": [{"seq": turn.seq, "said": turn.said, "ts": turn.ts,
+        # Each with its number in the session, as the chart of the context
+        # names them: a turn with no reply has no column.
+        "each": [{"turn": at, "seq": turn.seq, "said": turn.said, "ts": turn.ts,
                   "usd": turn_share(status.cost_usd, turn.weight, total),
                   "weight": round(turn.weight, 1)}
-                 for turn in costs.turns[-CONTEXT_POINTS:]],
+                 for at, turn in enumerate(costs.turns)
+                 if at >= len(costs.turns) - CONTEXT_POINTS],
         # The tool results that cost the most while they stayed in context.
         "carried": carried_json(costs.carry, status.cost_usd, total),
         # What reading the context cost, by what it held, for the split by
         # what the tokens were for, as the reader asked.
         "read": costs.carry.parts(),
         # Each reply's context, for its chart.
-        "context": context_json(costs.carry),
+        "context": context_json(costs.carry, costs.turns),
         # How many subagents ran, for the note over the ones the row keeps
         # (`putSumRuns`). The lists of subagents by kind and of calls by
         # tool went with the page's lists (#723): nothing read them.
@@ -16523,10 +16537,10 @@ body.switching #content::after {
    session's transcript. */
 .content.agentview .turnacts { display: none; }
 .content.agentview .who .self { cursor: default; }
-/* The Statistics tab (issue 622): this session on the left, all sessions
-   this month on the right (issue 653), in the same parts (issue 723); the
-   month under the session where the two do not fit side by side. A switch
-   between them hid one, and the reader wanted both in view. */
+/* The Statistics tab (issue 622): all sessions this month on the left,
+   this session on the right (issue 653), in the same parts (issue 723);
+   the session under the month where the two do not fit side by side. A
+   switch between them hid one, and the reader wanted both in view. */
 .summarybox { container-type: inline-size; }
 .summary { display: flex; flex-direction: column; gap: 30px; }
 /* Side by side, each part is one row of a grid over both columns, so the
@@ -16539,8 +16553,8 @@ body.switching #content::after {
     gap: 0 40px; align-items: stretch;
   }
   .summary > .sumpart { display: contents; }
-  .summary > .sumpart > * { grid-row: var(--row); grid-column: 1; }
-  .summary > .sumpart.month > * { grid-column: 2; }
+  .summary > .sumpart > * { grid-row: var(--row); grid-column: 2; }
+  .summary > .sumpart.month > * { grid-column: 1; }
   /* "What it cost" shares its rows across the two columns, so the
      session's token bar stands level with the month's, and the lists
      under them too: the title, the question, the charts, the bar, the
@@ -16565,6 +16579,14 @@ body.switching #content::after {
 .summary .sumpart .for3, .summary .sumpart .sumbar.for3 { background: var(--needs); fill: var(--needs); }
 .summary .sumpart .for4, .summary .sumpart .sumbar.for4 { background: var(--kind-1); fill: var(--kind-1); }
 .ctxhit { fill: transparent; }
+.ctxhit.link { cursor: pointer; }
+/* Every other turn a band over the chart, and a line where each begins,
+   as the reader asked: where a turn's replies are. Never in the pointer's
+   way. */
+.ctxturn { fill: color-mix(in srgb, var(--ink) 7%, transparent); pointer-events: none; }
+.ctxname { pointer-events: none; }
+.ctxedge { stroke: color-mix(in srgb, var(--ink) 30%, transparent); stroke-width: 1;
+  pointer-events: none; }
 /* A turn's column, in the session's colour; a link opens its turn. */
 .eachturn { fill: var(--needs); }
 .eachturn.link { cursor: pointer; }
@@ -16587,10 +16609,9 @@ body.switching #content::after {
 .sumgroup > .sumask { margin: 0 0 4px; font-size: 12.5px; color: var(--ink-mute); }
 .sumpart, .sumcard { min-width: 0; }
 .sumcard.wide { grid-column: 1 / -1; }
-.sumcards {
-  display: grid; gap: 0 40px; align-items: start;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr));
-}
+/* A list a line across its part, as the reader asked: two lists side by
+   side cut every line short and left half a list empty. */
+.sumcards { display: grid; gap: 0 40px; align-items: start; grid-template-columns: minmax(0, 1fr); }
 .sumsection { margin: 0 0 12px; font-size: 15px; font-weight: 600; color: var(--ink-bright); }
 .sumstat.over .sumvalue { color: var(--needs); }
 /* The month's two charts (issue 653): one dollar scale each, thin marks,
@@ -16598,7 +16619,7 @@ body.switching #content::after {
 .spendchart { margin-top: 16px; }
 .spendsvg { display: block; width: 100%; height: auto; overflow: visible; }
 .spendgrid { stroke: var(--edge); stroke-width: 1; }
-.spendtick { fill: var(--ink-faint); font-family: var(--sans); font-size: 11px;
+.spendtick { fill: var(--ink-faint); font-family: var(--sans); font-size: 12px;
   font-variant-numeric: tabular-nums; }
 .spendtick.today { fill: var(--ink-soft); }
 .spendlabel { fill: var(--ink-soft); font-family: var(--sans); font-size: 12px;
@@ -16612,7 +16633,7 @@ body.switching #content::after {
 .spendday { fill: var(--spend); }
 .spendhit { fill: transparent; }
 .spendweekend { fill: color-mix(in srgb, var(--ink) 4%, transparent); }
-.spendwday { fill: var(--ink-faint); font-family: var(--sans); font-size: 10px; }
+.spendwday { fill: var(--ink-faint); font-family: var(--sans); font-size: 12px; }
 .spendwday.weekend { fill: var(--ink-mute); }
 .spendhit:hover { fill: color-mix(in srgb, var(--ink) 6%, transparent); }
 /* The tab has no list column, so no find box: its home stays empty. */
@@ -28501,26 +28522,39 @@ function drawSummary(box) {
     box.dataset.listKey = box.dataset.bodyKey = box.dataset.summaryKey = "";
   }
   const allowance = setting("allowance") || 0;
-  if (!fresh(box, "summaryKey", JSON.stringify([state.chosen, got, state.spend, allowance]))) return;
+  // The width too: the charts are drawn at the width they are shown at.
+  if (!fresh(box, "summaryKey", JSON.stringify([state.chosen, got, state.spend, allowance,
+                                                box.clientWidth]))) return;
   box.replaceChildren();
   const pane = put(box, "div", "summary");
-  // This session, and beside it all of them this month (#653), in the same
-  // parts (#723). A switch between the two hid one, and the reader wanted
-  // both in view; the month goes under the session where they do not fit.
-  const mine = put(pane, "section", "sumpart");
-  put(mine, "h2", "sumview", "This session");
-  putSession(mine, got);
-  rowParts(mine);
+  // All sessions this month, and beside it this session (#653), in the
+  // same parts (#723), the month on the left as the reader chose. A switch
+  // between the two hid one, and the reader wanted both in view; the
+  // session goes under the month where they do not fit.
   const month = put(pane, "section", "sumpart month");
   put(month, "h2", "sumview", "This month, all sessions");
   putSpend(month, state.spend, allowance);
   rowParts(month);
+  const mine = put(pane, "section", "sumpart");
+  put(mine, "h2", "sumview", "This session");
+  putSession(mine, got);
+  rowParts(mine);
 }
+
+// The tab again when its box changes width: its charts are drawn at the
+// width they are shown at.
+new ResizeObserver(() => {
+  if (document.getElementById("content").dataset.tab === "summary") draw();
+}).observe(document.getElementById("content"));
 
 // The rows of one view's parts (#723), for the grid that puts the two
 // views side by side: what stands before the first part is row 1, in a box
-// of its own, and each part the next row. Read by CSS only where the two
-// fit side by side; one under the other, the sections keep their order.
+// of its own, then "What it cost" on five rows it shares with the other
+// column's (`.sumaligned`), then the other parts in a box of their own
+// (`.sumrest`): they say different things in the two views, and on shared
+// rows the session's short part 2 left a gap over its part 3, as the reader
+// saw. Read by CSS only where the two fit side by side; one under the
+// other, the sections keep their order.
 function rowParts(section) {
   const top = document.createElement("div");
   top.className = "sumtop";
@@ -28528,8 +28562,12 @@ function rowParts(section) {
     top.appendChild(section.firstChild);
   }
   section.prepend(top);
-  // "What it cost" takes five rows, shared with the other column's
-  // (`.sumaligned`); every other part, one.
+  const rest = document.createElement("div");
+  rest.className = "sumrest";
+  for (const part of [...section.querySelectorAll(":scope > .sumgroup:not(.sumaligned)")]) {
+    rest.appendChild(part);
+  }
+  if (rest.firstChild) section.appendChild(rest);
   let row = 1;
   for (const child of section.children) {
     child.style.setProperty("--row", row);
@@ -28634,17 +28672,17 @@ function putSpend(pane, spend, allowance) {
   const spent = spend.days.reduce((sum, one) => sum + one, 0);
   const pace = spent / spend.days.length * spend.length;
   const head = put(pane, "div", "sumhead");
-  putStat(head, money(spent), "spent");
-  putStat(head, money(spend.days[spend.days.length - 1]), "today");
-  putStat(head, money(pace), "at this pace",
+  putStat(head, cents(spent), "spent");
+  putStat(head, cents(spend.days[spend.days.length - 1]), "today");
+  putStat(head, cents(pace), "at this pace",
           "the month, if each day to come costs what the days so far did on average");
   const workdays = workdaysLeft(spend);
   putStat(head, String(workdays), workdays === 1 ? "workday left" : "workdays left",
           "Monday to Friday, after today, to the end of the month");
   if (allowance) {
-    putStat(head, money(allowance), "allowance", ALLOWANCE_WHERE);
+    putStat(head, cents(allowance), "allowance", ALLOWANCE_WHERE);
     const left = allowance - spent;
-    putStat(head, money(Math.abs(left)), left >= 0 ? "left" : "over").classList
+    putStat(head, cents(Math.abs(left)), left >= 0 ? "left" : "over").classList
       .toggle("over", left < 0);
   }
   const note = put(pane, "p", "sumtokens", "Claude Code's own estimate, at list price, kept since "
@@ -28682,7 +28720,7 @@ function putMonthSessions(pane, sessions, charts) {
   for (const one of sessions) {
     const s = state.sessions.find((x) => x.id === one.id);
     const line = put(list, "button", "sumline turnlink");
-    put(line, "span", "sumnum", money(one.usd));
+    put(line, "span", "sumnum", cents(one.usd));
     putSumBar(line, one.usd / most);
     put(line, "span", "sumsaid", s ? rowName(s) : one.name || one.id.slice(0, 8));
     markSpend(line, charts, one.days || []);
@@ -28709,7 +28747,7 @@ function putMonthTurns(pane, turns, charts) {
   for (const one of turns) {
     const s = state.sessions.find((x) => x.id === one.id);
     const line = put(list, "button", "sumline turnlink");
-    put(line, "span", "sumnum", "\u2248" + money(one.usd));
+    put(line, "span", "sumnum", "\u2248" + cents(one.usd));
     putSumBar(line, one.usd / most);
     const said = put(line, "span", "sumsaid");
     put(said, "span", "sumwho", (s ? rowName(s) : one.name || one.id.slice(0, 8)) + " \u00b7 ");
@@ -28749,7 +28787,7 @@ function putMonthCarried(pane, carried, charts, spent) {
   // a command in half a card left a few letters of each.
   const card = putSumCard(pane, "tool results kept in context");
   card.classList.add("wide");
-  const all = "\u2248" + money(carried.usd)
+  const all = "\u2248" + cents(carried.usd)
     + (spent ? ", " + Math.round(100 * carried.usd / spent) + "% of what was spent" : "");
   putSumNote(card, "All of them: " + all + ". Of the sessions wostuast keeps.",
              "Every later reply reads a tool's result again, until a compaction or a"
@@ -28761,7 +28799,7 @@ function putMonthCarried(pane, carried, charts, spent) {
   for (const one of carried.results) {
     const s = state.sessions.find((x) => x.id === one.id);
     const line = put(list, "button", "sumline turnlink");
-    put(line, "span", "sumnum", "\u2248" + money(one.usd));
+    put(line, "span", "sumnum", "\u2248" + cents(one.usd));
     putSumBar(line, one.usd / most);
     const said = put(line, "span", "sumsaid");
     put(said, "span", "sumwho", (s ? rowName(s) : one.name || one.id.slice(0, 8)) + " \u00b7 ");
@@ -28784,7 +28822,7 @@ function putMonthCarried(pane, carried, charts, spent) {
   const dearest = carried.tools[0].usd || 1;
   for (const one of carried.tools) {
     const line = put(tools, "div", "sumline");
-    put(line, "span", "sumnum", "\u2248" + money(one.usd));
+    put(line, "span", "sumnum", "\u2248" + cents(one.usd));
     putSumBar(line, one.usd / dearest);
     put(line, "span", "sumsaid", [one.tool, counted(one.calls, "call", "calls"),
                                   roughly(one.tokens) + " tokens"].join(" \u00b7 "));
@@ -28809,10 +28847,18 @@ function putSvg(parent, tag, attrs) {
   return node;
 }
 
-// A chart's frame: drawn at this width and scaled to the pane's, with room
-// for the dollars on the left, the end labels on the right, and two rows of
-// days under it: the weekday, then the date (#684).
-const CHART = { width: 900, left: 52, right: 120, top: 12, bottom: 38 };
+// A chart's frame: room for the dollars on the left, the end labels on the
+// right, and two rows of days under it: the weekday, then the date (#684).
+// Its width is the pane's (`chartWidth`).
+const CHART = { left: 64, right: 130, top: 12, bottom: 38 };
+
+// A chart's width, in the pixels it is shown at, so its words are the size
+// of the page's: drawn at a fixed width and scaled to its column, the
+// words grew and shrank with the screen, and no two charts had the same
+// size of text, as the reader saw. The tab is drawn again when it changes.
+function chartWidth(box) {
+  return Math.max(320, Math.round(box.getBoundingClientRect().width));
+}
 
 // The weekday of a day of the month the daemon names, 0 for Sunday.
 function spendWeekday(spend, day) {
@@ -28833,9 +28879,11 @@ function workdaysLeft(spend) {
 // A chart of one month: its box, its scales, the dollar lines and the days
 // under it. `most` is the highest amount it must hold.
 function putMonthChart(pane, spend, height, most, ticks, label) {
-  const svg = putSvg(put(pane, "div", "spendchart"), "svg", {
-    viewBox: `0 0 ${CHART.width} ${height}`, class: "spendsvg", role: "img", "aria-label": label });
-  const wide = CHART.width - CHART.left - CHART.right;
+  const box = put(pane, "div", "spendchart");
+  const width = chartWidth(box);
+  const svg = putSvg(box, "svg", {
+    viewBox: `0 0 ${width} ${height}`, class: "spendsvg", role: "img", "aria-label": label });
+  const wide = width - CHART.left - CHART.right;
   const tall = height - CHART.top - CHART.bottom;
   const step = niceStep(most / ticks);
   const top = Math.max(step, Math.ceil(most / step) * step);
@@ -28853,7 +28901,7 @@ function putMonthChart(pane, spend, height, most, ticks, label) {
     putSvg(svg, "line", { class: "spendgrid", x1: CHART.left, x2: CHART.left + wide,
                           y1: chart.y(usd), y2: chart.y(usd) });
     putSvg(svg, "text", { class: "spendtick", x: CHART.left - 8, y: chart.y(usd) + 4,
-                          "text-anchor": "end" }).textContent = "$" + roundish(usd);
+                          "text-anchor": "end" }).textContent = cents(usd);
   }
   const today = spend.days.length;
   for (let day = 1; day <= spend.length; day += 1) {
@@ -28883,10 +28931,11 @@ function niceStep(rough) {
   return [1, 2, 5, 10].map((one) => one * power).find((one) => one >= rough);
 }
 
-// An amount on a chart's line: no cents unless it needs them.
-function roundish(usd) {
-  return Number.isInteger(Math.round(usd * 100) / 100) ? String(Math.round(usd))
-    : usd.toFixed(2);
+// An amount of the Statistics tab, always with its cents, as the reader
+// asked: "$28" over "$7.65" did not line up. Not `money`, which keeps the
+// tab row's strip short.
+function cents(usd) {
+  return "$" + usd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 // The running total of the month, the way it goes at this pace, and the
@@ -28905,11 +28954,11 @@ function putSpendRun(pane, spend, allowance, pace) {
   putSvg(svg, "path", { class: "spendline", d: line });
   putSvg(svg, "line", { class: "spendpace", x1: x(today), y1: y(spent),
                         x2: x(spend.length), y2: y(pace) });
-  const ends = [[pace, "at this pace " + money(pace)]];
+  const ends = [[pace, "at this pace " + cents(pace)]];
   if (allowance) {
     putSvg(svg, "line", { class: "spendlimit", x1: x(0), x2: x(spend.length),
                           y1: y(allowance), y2: y(allowance) });
-    ends.push([allowance, "allowance " + money(allowance)]);
+    ends.push([allowance, "allowance " + cents(allowance)]);
   }
   // Two labels at the right end a line apart, never on each other.
   ends.sort((a, b) => b[0] - a[0]);
@@ -28923,9 +28972,9 @@ function putSpendRun(pane, spend, allowance, pace) {
   }
   putSvg(svg, "circle", { class: "spenddot", cx: x(today), cy: y(spent), r: 4 });
   putSvg(svg, "text", { class: "spendlabel", x: x(today), y: y(spent) - 10,
-                        "text-anchor": "middle" }).textContent = money(spent);
-  run.forEach((usd, at) => putSpendHit(chart, at + 1, `${money(usd)} so far,`
-                                       + ` ${money(spend.days[at])} that day`, spend));
+                        "text-anchor": "middle" }).textContent = cents(spent);
+  run.forEach((usd, at) => putSpendHit(chart, at + 1, `${cents(usd)} so far,`
+                                       + ` ${cents(spend.days[at])} that day`, spend));
   return chart;
 }
 
@@ -28937,7 +28986,7 @@ function putSpendDays(pane, spend) {
     const d = spendColumn(chart, at, usd);
     if (d) putSvg(chart.svg, "path", { class: "spendday", d });
   });
-  spend.days.forEach((usd, at) => putSpendHit(chart, at + 1, money(usd), spend));
+  spend.days.forEach((usd, at) => putSpendHit(chart, at + 1, cents(usd), spend));
   return chart;
 }
 
@@ -28991,7 +29040,7 @@ function markSpend(line, charts, days) {
     // runs low, and the number says what the line cannot.
     const [endX, endY] = points[points.length - 1];
     putSvg(run, "text", { class: "spendlabel spendminelabel", x: endX + 8, y: endY + 4 })
-      .textContent = money(total);
+      .textContent = cents(total);
   };
   line.addEventListener("mouseenter", on);
   line.addEventListener("mouseleave", off);
@@ -29015,7 +29064,7 @@ function putSpendHit(chart, day, words, spend) {
 function putSumHead(pane, got) {
   const head = put(pane, "div", "sumhead");
   const stat = (value, what, title) => putStat(head, value, what, title);
-  stat(got.cost_usd === null || got.cost_usd === undefined ? "\u2014" : money(got.cost_usd),
+  stat(got.cost_usd === null || got.cost_usd === undefined ? "\u2014" : cents(got.cost_usd),
        "spent", "Claude Code's own estimate, at list price. It starts again at /clear.");
   stat(String(got.turns), got.turns === 1 ? "turn" : "turns");
   if (got.lines_added || got.lines_removed) {
@@ -29150,7 +29199,7 @@ function putSumEach(parent, turns) {
   const most = Math.max(...shown.map(value)) || 1;
   const all = shown.reduce((sum, one) => sum + one.weight, 0) || 1;
   put(parent, "h3", "sumtitle", "each turn");
-  const width = 600, height = 120, left = 40, bottom = 22, top = 8;
+  const width = chartWidth(parent), height = 150, left = 64, bottom = 22, top = 8;
   const slot = (width - left) / shown.length;
   const y = (v) => top + (height - top - bottom) * (1 - v / most);
   const svg = putSvg(parent, "svg", { class: "spendsvg", viewBox: `0 0 ${width} ${height}`,
@@ -29159,14 +29208,15 @@ function putSumEach(parent, turns) {
   for (const v of [0, most / 2, most]) {
     putSvg(svg, "line", { class: "spendgrid", x1: left, x2: width, y1: y(v), y2: y(v) });
     putSvg(svg, "text", { class: "spendtick", x: left - 6, y: y(v) + 4, "text-anchor": "end" })
-      .textContent = dollars ? money(v) : Math.round(100 * v / all) + "%";
+      .textContent = dollars ? cents(v) : Math.round(100 * v / all) + "%";
   }
   shown.forEach((one, at) => {
     const x = left + at * slot;
     const bar = putSvg(svg, "rect", { class: "eachturn" + (one.seq < 0 ? "" : " link"),
                                       x: x + slot * 0.15, width: Math.max(1, slot * 0.7),
                                       y: y(value(one)), height: y(0) - y(value(one)) });
-    putSvg(bar, "title", {}).textContent = (dollars ? "\u2248" + money(one.usd) : "")
+    putSvg(bar, "title", {}).textContent = "turn " + ((one.turn ?? at) + 1) + ": "
+      + (dollars ? "\u2248" + cents(one.usd) : "")
       + (dollars ? " \u00b7 " : "") + Math.round(100 * one.weight / all) + "% \u00b7 "
       + one.said + (one.seq < 0 ? "" : "\nshow this turn in the transcript");
     if (one.seq < 0) return;
@@ -29178,7 +29228,8 @@ function putSumEach(parent, turns) {
   });
   for (const at of [0, shown.length - 1]) {
     putSvg(svg, "text", { class: "spendtick", x: left + (at + 0.5) * slot, y: height - 6,
-                          "text-anchor": at ? "end" : "start" }).textContent = "turn " + (at + 1);
+                          "text-anchor": at ? "end" : "start" })
+      .textContent = "turn " + ((shown[at].turn ?? at) + 1);
   }
 }
 
@@ -29191,7 +29242,7 @@ function putSumContext(parent, context) {
   const points = (context && context.points) || [];
   if (points.length < 2) return;
   put(parent, "h3", "sumtitle", "context, reply by reply");
-  const width = 600, height = 140, left = 40, bottom = 22, top = 8;
+  const width = chartWidth(parent), height = 220, left = 64, bottom = 22, top = 8;
   const most = Math.max(...points.map(([all]) => all)) || 1;
   const x = (at) => left + (width - left) * at / (points.length - 1);
   const y = (tokens) => top + (height - top - bottom) * (1 - tokens / most);
@@ -29218,6 +29269,7 @@ function putSumContext(parent, context) {
     putSvg(svg, "path", { class: "for" + (layer + 1), d: d + "Z" });
   });
   const reply = (at) => Math.min(context.replies, at * context.every + 1);
+  const turnOf = putCtxTurns(svg, context.turns || [], points.length, x, top, height - bottom);
   for (const at of [0, points.length - 1]) {
     putSvg(svg, "text", { class: "spendtick", x: x(at), y: height - 6,
                           "text-anchor": at ? "end" : "start" }).textContent = "reply " + reply(at);
@@ -29225,12 +29277,51 @@ function putSumContext(parent, context) {
   // A point's numbers on a hover, a strip a point.
   const step = (width - left) / (points.length - 1);
   layers.forEach(([start, talk, all], at) => {
-    const hit = putSvg(svg, "rect", { class: "ctxhit", x: x(at) - step / 2, y: top,
-                                      width: step, height: height - top - bottom });
-    putSvg(hit, "title", {}).textContent = "reply " + reply(at) + ": " + roughly(all)
+    const turn = turnOf(at);
+    const link = turn && turn.seq >= 0;
+    const hit = putSvg(svg, "rect", { class: "ctxhit" + (link ? " link" : ""), x: x(at) - step / 2,
+                                      y: top, width: step, height: height - top - bottom });
+    putSvg(hit, "title", {}).textContent = (turn ? "turn " + (turn.turn + 1) + ", " : "")
+      + "reply " + reply(at) + ": " + roughly(all)
       + " tokens: the start " + roughly(start) + ", the conversation "
-      + roughly(talk - start) + ", tool results " + roughly(all - talk);
+      + roughly(talk - start) + ", tool results " + roughly(all - talk)
+      + (turn ? "\n" + turn.said : "") + (link ? "\nshow this turn in the transcript" : "");
+    if (!link) return;
+    hit.addEventListener("click", () => {
+      state.turns.goTo = turn.seq;
+      state.turns.goToTs = turn.ts;
+      showInChat();
+    });
   });
+}
+
+// The turns on the chart of the context (#723), as the reader asked: a
+// band behind every other turn's replies and a line where each begins, so
+// a turn that read a lot shows. Returns the turn of each point, for its
+// hover and its link.
+function putCtxTurns(svg, turns, count, x, top, bottom) {
+  const half = count > 1 ? (x(1) - x(0)) / 2 : 0;
+  turns.forEach((turn, at) => {
+    const end = at + 1 < turns.length ? turns[at + 1].at : count;
+    const left = Math.max(x(0), x(turn.at) - half);
+    const right = Math.min(x(count - 1), x(end - 1) + half);
+    if (at % 2) {
+      putSvg(svg, "rect", { class: "ctxturn", x: left, y: top, width: Math.max(1, right - left),
+                            height: bottom - top });
+    }
+    if (at) putSvg(svg, "line", { class: "ctxedge", x1: left, x2: left, y1: top, y2: bottom });
+    // Its number where it has room, as "each turn" under it names them.
+    if (right - left >= 56) {
+      putSvg(svg, "text", { class: "spendtick ctxname", x: left + 6, y: top + 14 })
+        .textContent = "turn " + (turn.turn + 1);
+    }
+  });
+  const of = [];
+  turns.forEach((turn, at) => {
+    const end = at + 1 < turns.length ? turns[at + 1].at : count;
+    for (let point = turn.at; point < end; point += 1) of[point] = turn;
+  });
+  return (point) => of[point] || null;
 }
 
 // The turns that used the most, each a link to it in the transcript.
@@ -29246,7 +29337,7 @@ function putCostly(pane, got) {
   const most = Math.max(...turns.map((one) => one.weight || 0)) || 1;
   for (const one of turns) {
     const line = put(list, "button", "sumline turnlink");
-    put(line, "span", "sumnum", one.usd === null ? "" : "\u2248" + money(one.usd));
+    put(line, "span", "sumnum", one.usd === null ? "" : "\u2248" + cents(one.usd));
     putSumBar(line, (one.weight || 0) / most);
     put(line, "span", "sumsaid", one.said);
     // The tokens on a hover, as the reader chose (#685): the bar took
@@ -29287,7 +29378,7 @@ function putSumCarried(pane, got) {
   const most = carried.results[0].weight || 1;
   for (const one of carried.results) {
     const line = put(list, "button", "sumline turnlink");
-    put(line, "span", "sumnum", one.usd === null ? "" : "\u2248" + money(one.usd));
+    put(line, "span", "sumnum", one.usd === null ? "" : "\u2248" + cents(one.usd));
     putSumBar(line, one.weight / most);
     put(line, "span", "sumsaid", [roughly(one.tokens) + " \u00d7 " + one.replies, one.tool,
                                   one.what].filter(Boolean).join(" \u00b7 "));
