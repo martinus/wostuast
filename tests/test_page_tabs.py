@@ -1347,6 +1347,58 @@ def test_the_month_s_tool_results_kept_in_context_and_by_tool(pair_at):
         assert "cat big" in page.evaluate("window.landedOn[0]")
 
 
+def test_the_session_s_charts_and_its_bar_on_the_month_s_scale(ws, page_at):
+    """The reader asked for charts on the session's side: how many tokens
+    each reply read, in the parts of what they were for, and what each
+    turn cost. The list's bars wear the chart's colours, so it is the key.
+    The session's token bar stands level with the month's, as long as its
+    share of the month, to see how much of the month the session was."""
+    daemon, path = page_at
+    def turn(at):
+        # A moment of its own: a turn's link finds its turn by its moment.
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 600 + 60 * at))
+        made = conftest.record("tool", f"step {at}", tool_id=f"c{at}", ts=stamp)
+        made["message"].update(id=f"m{at}", usage=dict(
+            cache_read_input_tokens=10_000 + 3_000 * at, output_tokens=100))
+        return [conftest.record("you", f"Step {at}.", ts=stamp), made,
+                conftest.record("result", "x" * 400, tool_id=f"c{at}", ts=stamp)]
+
+    write_records(daemon, *[one for at in range(6) for one in turn(at)])
+    ws.write_status("s1", ws.Status(cost_usd=1.0, days={time.strftime("%Y-%m-%d"): 1.0}))
+    daemon.store.refresh()
+    with opened(path) as page:
+        page.set_viewport_size({"width": 2560, "height": 1440})
+        wait_for_map(page)
+        page.keyboard.press("4")
+        page.wait_for_selector(".sumpart:not(.month) .sumfigs path.for3")
+        mine = ".sumpart:not(.month)"
+        assert page.locator(f"{mine} .eachturn").count() == 6
+        same = page.evaluate("""(mine) => { const part = document.querySelector(mine);
+          return [1, 2, 3].map((n) =>
+            getComputedStyle(part.querySelector('.sumfigs path.for' + n)).fill
+            === getComputedStyle(part.querySelector('.sumbar.for' + n)).backgroundColor); }""",
+                             mine)
+        assert same == [True, True, True]
+        # A month four times this session: its bar a quarter, and level.
+        page.wait_for_selector(".sumpart.month .kindbar")
+        page.evaluate("""() => {
+          const k = state.spend.kinds;
+          for (const key of Object.keys(k.weighted)) k.weighted[key] *= 4;
+          document.getElementById('content').dataset.summaryKey = '';
+          draw(); }""")
+        page.wait_for_selector(f"{mine} .sumtitle >> text=25% of the month")
+        bars = page.evaluate("""(mine) => [mine, '.sumpart.month'].map((one) => {
+          const at = document.querySelector(one + ' .kindbar').getBoundingClientRect();
+          return [Math.round(at.top), at.width]; })""", mine)
+        assert bars[0][0] == bars[1][0], bars
+        assert abs(bars[0][1] / bars[1][1] - 0.25) < 0.01, bars
+        # A turn's column opens it in the transcript beside the tab.
+        watch_landings(page)
+        page.locator(f"{mine} .eachturn.link").nth(2).click()
+        page.wait_for_function("window.landedOn.length > 0")
+        assert "Step 2." in page.evaluate("window.landedOn[0]")
+
+
 def test_the_month_s_charts_show_the_weekdays_and_the_workdays_left(page_at):
     """The days said only 1, 8, 15 (#684): the reader could not see how many
     working days the month had left. Each day has its weekday's letter, a
