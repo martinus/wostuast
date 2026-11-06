@@ -1063,8 +1063,8 @@ def test_the_statistics_tab_says_it_is_reading_until_the_summary_comes(page_at):
         wait_for_map(page)
         held = hold(page, "**/api/session/s1/summary*")
         page.keyboard.press("4")
-        page.wait_for_selector(".summary .sumnote")
-        assert page.locator(".summary .sumnote").first.inner_text() \
+        page.wait_for_selector(".sumpart:not(.month) .sumnote")
+        assert page.locator(".sumpart:not(.month) .sumnote").first.inner_text() \
             == "Reading the transcript\u2026"
         wait_until(page, lambda: held)
         held[0].continue_()
@@ -1117,11 +1117,15 @@ def show_month(page):
 
 
 def test_the_statistics_tab_uses_a_wide_screen(ws, page_at):
-    """The reader wanted both views in sight, not a switch between them: the
-    session on the left, all sessions this month on the right, and the
-    month under the session where the two do not fit (#723). Side by side,
-    each part is one row over both columns, so a part stands level with
-    its partner, and each part is a panel of its own."""
+    """The reader wanted both views in sight, not a switch between them:
+    all sessions this month on the left, the session on the right, and the
+    session under the month where the two do not fit (#723). Side by side,
+    "What it cost" stands level with its partner; the parts after it follow
+    each other in their own column, as the reader asked: the session's
+    short part 2 left a gap over its part 3. Each part is a panel of its
+    own, each list spans it, every amount has its cents, and every chart is
+    drawn at the width it is shown at, so its text is the page's size. A
+    redraw keeps the scroll."""
     daemon, path = page_at
     used = dict(input_tokens=40, output_tokens=9000, cache_read_input_tokens=50000)
     made = conftest.record("tool", "make test", tool_id="g1")
@@ -1133,15 +1137,27 @@ def test_the_statistics_tab_uses_a_wide_screen(ws, page_at):
                                    tool_input={"command": "make test"}, duration_ms=30_000))
     daemon.store.refresh()
     today = time.strftime("%Y-%m-%d")
-    ws.write_status("s2", ws.Status(cost_usd=4.0, days={today: 4.0}))
+    ws.write_status("s2", ws.Status(cost_usd=40.0, days={today: 40.0}))
+    # More sessions this month, so the month's part 2 is the taller: on
+    # rows shared with it, the session's part 3 stood under the month's.
+    for at in range(3, 11):
+        ws.write_status(f"s{at}", ws.Status(cost_usd=float(at), days={today: float(at)}))
     look = """() => {
       const at = (sel) => [...document.querySelectorAll(sel)].map((one) => {
         const box = one.getBoundingClientRect();
-        return [Math.round(box.left), Math.round(box.top), Math.round(box.right)]; });
-      return {views: at('.sumview'), mine: at('.sumpart:not(.month) > .sumgroup'),
-              month: at('.sumpart.month > .sumgroup'),
+        return [Math.round(box.left), Math.round(box.top), Math.round(box.right),
+                Math.round(box.bottom)]; });
+      // Where the session's part 2 ends: its panel stretches on a shared row.
+      const two = document.querySelectorAll('.sumpart:not(.month) .sumgroup')[1];
+      const end = Math.round(two.lastElementChild.getBoundingClientRect().bottom);
+      return {views: at('.sumview'), mine: at('.sumpart:not(.month) .sumgroup'), end,
+              month: at('.sumpart.month .sumgroup'),
               border: getComputedStyle(document.querySelector('.sumgroup')).borderTopWidth};
     }"""
+    # How much each chart is scaled from what it was drawn at: 1 is drawn
+    # at the width it is shown at.
+    scales = """() => [...document.querySelectorAll('.summary svg.spendsvg')].map((svg) =>
+      Math.round(100 * svg.getBoundingClientRect().width / svg.viewBox.baseVal.width) / 100)"""
     with opened(path) as page:
         page.set_viewport_size({"width": 2560, "height": 1440})
         wait_for_map(page)
@@ -1150,19 +1166,46 @@ def test_the_statistics_tab_uses_a_wide_screen(ws, page_at):
         page.wait_for_selector(".sumpart.month .spendsvg")
         assert page.locator(".statswitch").count() == 0
         got = page.evaluate(look)
-        session, month = got["views"]
-        assert session[1] == month[1] and month[0] > session[2], got
-        # The parts on rows: each of the month's stands level with the
-        # session's part of the same number.
-        assert [one[1] for one in got["month"]] == [one[1] for one in got["mine"]][:2], got
+        month, session = got["views"]
+        assert session[1] == month[1] and session[0] > month[2], got
+        # "What it cost" level with its partner, and part 2; the session's
+        # part 3 right under its own part 2, not under the month's.
+        assert got["month"][0][1] == got["mine"][0][1], got
+        assert got["month"][1][1] == got["mine"][1][1], got
+        assert 0 < got["mine"][2][1] - got["end"] < 60, got
         assert got["border"] == "1px", got
-        # Narrow, the month goes under the session.
+        # A list spans its part.
+        width = page.evaluate("""() => {
+          const part = document.querySelectorAll('.sumpart:not(.month) .sumgroup')[1];
+          const card = part.querySelector('.sumcards > .sumcard:not(.wide)');
+          return [card.getBoundingClientRect().width, part.clientWidth]; }""")
+        assert width[0] > width[1] - 40, width
+        # Cents on every amount: the tile, the month's chart and its list.
+        assert "$92.00\nspent" in page.locator(".sumpart.month .sumhead").inner_text()
+        assert page.locator(".sumpart.month .spendtick").first.text_content() == "$0.00"
+        assert page.locator(".sumpart.month .sumcard", has_text="costliest sessions") \
+            .locator(".sumnum").first.inner_text() == "$40.00"
+        # Every chart at the width it is shown at, its text the page's.
+        assert set(page.evaluate(scales)) == {1}, page.evaluate(scales)
+        assert set(page.evaluate("""() => [...document.querySelectorAll(
+          '.summary svg text')].map((one) => getComputedStyle(one).fontSize)""")) == {"12px"}
+        # Drawn again, as a poll draws it, the tab stays where it was read.
+        page.set_viewport_size({"width": 2560, "height": 700})
+        page.wait_for_function("document.getElementById('content').scrollHeight > 1000")
+        page.evaluate("document.getElementById('content').scrollTop = 300")
+        assert page.evaluate("document.getElementById('content').scrollTop") == 300
+        page.evaluate("""() => { const box = document.getElementById('content');
+          box.dataset.summaryKey = ''; draw(); }""")
+        assert page.evaluate("document.getElementById('content').scrollTop") == 300
+        # Narrow, the session goes under the month, its charts drawn again
+        # at their new width.
         page.set_viewport_size({"width": 1100, "height": 900})
         page.wait_for_function("""() => {
           const [one, two] = document.querySelectorAll('.sumview');
           return two.getBoundingClientRect().top > one.getBoundingClientRect().bottom
             && Math.abs(two.getBoundingClientRect().left
                         - one.getBoundingClientRect().left) < 1; }""")
+        page.wait_for_function(f"({scales})().every((one) => one === 1)")
 
 
 def test_the_costliest_turns_and_the_slowest_calls_have_bars(ws, page_at):
@@ -1363,7 +1406,10 @@ def test_the_session_s_charts_and_its_bar_on_the_month_s_scale(ws, page_at):
         return [conftest.record("you", f"Step {at}.", ts=stamp), made,
                 conftest.record("result", "x" * 400, tool_id=f"c{at}", ts=stamp)]
 
-    write_records(daemon, *[one for at in range(6) for one in turn(at)])
+    # A first turn with no reply: the charts name a turn by its number in
+    # the session, though it has no column.
+    write_records(daemon, conftest.record("you", "Hello."),
+                  *[one for at in range(6) for one in turn(at)])
     ws.write_status("s1", ws.Status(cost_usd=1.0, days={time.strftime("%Y-%m-%d"): 1.0}))
     daemon.store.refresh()
     with opened(path) as page:
@@ -1379,6 +1425,16 @@ def test_the_session_s_charts_and_its_bar_on_the_month_s_scale(ws, page_at):
             === getComputedStyle(part.querySelector('.sumbar.for' + n)).backgroundColor); }""",
                              mine)
         assert same == [True, True, True]
+        # The turns on the chart of the context, as the reader asked: a band
+        # behind every other one, a line where each begins, each named as
+        # "each turn" names it.
+        names = page.locator(f"{mine} .ctxname").all_text_contents()
+        numbers = [int(one.split()[1]) for one in names]
+        assert numbers == list(range(numbers[0], numbers[0] + 6)) and numbers[0] > 1, names
+        assert page.locator(f"{mine} .ctxturn").count() == 3
+        assert page.locator(f"{mine} .ctxedge").count() == 5
+        ticks = page.locator(f"{mine} .sumfigs svg").nth(1).locator(".spendtick")
+        assert ticks.all_text_contents()[-2:] == [names[0], names[-1]]
         # A month four times this session: its bar a quarter, and level.
         page.wait_for_selector(".sumpart.month .kindbar")
         page.evaluate("""() => {
@@ -1392,11 +1448,18 @@ def test_the_session_s_charts_and_its_bar_on_the_month_s_scale(ws, page_at):
           return [Math.round(at.top), at.width]; })""", mine)
         assert bars[0][0] == bars[1][0], bars
         assert abs(bars[0][1] / bars[1][1] - 0.25) < 0.01, bars
-        # A turn's column opens it in the transcript beside the tab.
+        # A turn's column opens it in the transcript beside the tab, and so
+        # does a reply on the chart of the context.
         watch_landings(page)
         page.locator(f"{mine} .eachturn.link").nth(2).click()
         page.wait_for_function("window.landedOn.length > 0")
         assert "Step 2." in page.evaluate("window.landedOn[0]")
+        hit = page.locator(f"{mine} .ctxhit").nth(3)
+        assert hit.locator("title").text_content().startswith(names[3] + ", reply 4:")
+        assert "Step 3." in hit.locator("title").text_content()
+        hit.click()
+        page.wait_for_function("window.landedOn.length > 1")
+        assert "Step 3." in page.evaluate("window.landedOn[1]")
 
 
 def test_the_month_s_charts_show_the_weekdays_and_the_workdays_left(page_at):
@@ -1670,8 +1733,9 @@ def test_the_statistics_tab_draws_the_month_against_the_allowance(ws, page_at):
         page.wait_for_selector(".summary .sumnote >> nth=-1")
         page.wait_for_function("!!state.spend")
         assert "Nothing kept yet" in page.locator(".summary").inner_text()
+        # The month on the left, as the reader chose.
         assert page.locator(".sumview").all_inner_texts() == [
-            "This session", "This month, all sessions"]
+            "This month, all sessions", "This session"]
         # Two sessions: one new today, one that spent a dollar yesterday.
         ws.write_status("s1", ws.Status(cost_usd=2.0, days={today: 2.0}))
         ws.write_status("s2", ws.Status(cost_usd=4.0, days={yesterday: 1.0, today: 4.0}))

@@ -406,6 +406,24 @@ def test_the_context_chart_gets_every_reply_or_an_even_few(ws):
     assert few["points"] == [[5, 1], [6, 2]] and few["every"] == 1
 
 
+def test_the_context_chart_says_where_each_turn_begins(ws):
+    """The reader asked to see the turns on the chart: each turn's first
+    point, and its prompt for a hover and a link. A turn with no reply, as
+    the third here, has none; neither has one none of whose replies is
+    kept."""
+    turns = [ws.TurnCost(seq=at, said=f"Step {at}.", ts=float(at)) for at in range(4)]
+    carry = ws.Carry(points=[(5, 0, 0), (6, 0, 0), (7, 1, 1), (8, 1, 1), (9, 1, 1), (9, 2, 3)],
+                     least=5)
+    got = ws.context_json(carry, turns)["turns"]
+    assert [(one["at"], one["turn"], one["said"]) for one in got] == [
+        (0, 0, "Step 0."), (2, 1, "Step 1."), (5, 3, "Step 3.")]
+    assert got[1]["seq"] == 1 and got[1]["ts"] == 1.0
+    long = ws.Carry(points=[(1000 + at, 0, at // 10) for at in range(1000)], least=1000)
+    kept = ws.context_json(long, [ws.TurnCost() for _ in range(100)])
+    begins = [one["at"] for one in kept["turns"]]
+    assert begins == sorted(set(begins)) and len(begins) == 100
+
+
 def test_a_tool_result_costs_each_later_reply_until_the_context_goes(ws, tmp_path):
     """A result's tokens are its share, by its characters, of how much the
     next reply's context grew past the reply before and that reply's own

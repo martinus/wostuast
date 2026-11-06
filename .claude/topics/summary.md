@@ -52,16 +52,19 @@ can optimize my future sessions to produce less churn".
   only a fill asks for a landing. A subagent's line still opens its own
   transcript on the Transcript tab: that is no place in this one.
   `test_the_tool_results_kept_in_context_link_to_their_calls`.
-- **The tab is "Statistics": this session on the left, all sessions this
-  month on the right, the month under the session where they do not fit**
-  (#653, #723, `drawSummary`, `putSession`, `putSpend`), as the reader
-  chose: a switch between the two hid one. Its key in the code stays
-  `summary`.
-  - **Side by side, each part is one row over both columns** (`rowParts`,
-    `--row`, `.summary` in a container query, `.sumpart` as `display:
-    contents`): in two columns of their own, a part drifted away from its
-    partner. What stands before the first part is row 1 (`.sumtop`). One
-    under the other, the sections keep their order.
+- **The tab is "Statistics": all sessions this month on the left, this
+  session on the right, the session under the month where they do not
+  fit** (#653, #723, `drawSummary`, `putSession`, `putSpend`), as the
+  reader chose: a switch between the two hid one. Its key in the code
+  stays `summary`.
+  - **Side by side, "What it cost" stands level with its partner; the
+    parts after it follow each other in their own column** (`rowParts`,
+    `--row`, `.sumtop`, `.sumrest`, `.summary` in a container query,
+    `.sumpart` as `display: contents`): in two columns of their own, a
+    part drifted away from its partner; on a row each, the session's short
+    part 2 left a gap over its part 3, and the reader said the parts after
+    the first say different things anyway. One under the other, the
+    sections keep their order.
   - **Each part is a panel of its own** (`.sumgroup`), as the reader asked,
     so where one part ends shows.
   - **"What it cost" shares its inner rows across the two columns**
@@ -70,6 +73,20 @@ can optimize my future sessions to produce less churn".
     session's token bar stands level with the month's, as the reader
     asked. Each piece has its row by name, so one that is missing moves
     nothing else.
+- **Every chart is drawn at the width it is shown at** (`chartWidth`), so
+  its text is the page's 12 px, as the reader asked: drawn at a fixed width
+  and scaled to its column, the text grew and shrank with the screen, and
+  no two charts had the same size. The width is in the tab's redraw key,
+  and a `ResizeObserver` draws it again. **The new tab is built under the
+  old one, which goes after**: a chart measures its width as it is drawn,
+  and in a box emptied first that put the scroll at the top on every poll.
+- **Every amount has its cents** (`cents`), as the reader asked: "$28"
+  over "$7.65" did not line up. Not `money`, which keeps the tab row's
+  strip short.
+- **A list spans its part** (`.sumcards`, one column), as the reader
+  asked: two lists side by side cut every line short and left half a list
+  empty.
+  `test_the_statistics_tab_uses_a_wide_screen`.
 - **The session has two charts beside the month's two** (#723,
   `putSumContext`, `putSumEach`), as the reader asked for the empty side:
   - **"context, reply by reply"**: how many tokens each reply read, in
@@ -78,9 +95,18 @@ can optimize my future sessions to produce less churn".
     grows with every reply; a compaction or a `/clear` is where it falls.
     A long session is thinned to `CONTEXT_POINTS`, every `every`-th reply
     and the last. A point's numbers are on its hover.
+    - **The turns are on it** (`putCtxTurns`, `context_json`'s `turns`),
+      as the reader asked: a band behind every other turn, a line where
+      each begins, its number where it has room. A reply's hover names its
+      turn and prompt, and a click opens the turn. **Each point keeps its
+      turn** (`Carry.points`, an index into `Costs.turns`); a turn none of
+      whose replies is kept has no band.
   - **"each turn"**: a column a turn, its share of what the session spent
     (`each`, the last `CONTEXT_POINTS` turns), as the month has a column a
-    day. A click opens the turn beside the tab (`showInChat`).
+    day. A click opens the turn beside the tab (`showInChat`). **A turn is
+    named by its number in the session** (`each`'s `turn`), as the chart
+    of the context names it: a turn with no reply has no column, and
+    counting the columns named the turns one apart on the two charts.
   - **The list "tokens, by what they were for" wears the chart's colours**
     (`.for1` to `.for4`, writing the output's blue), as the reader asked:
     it is the chart's key. Deep enough to win over the month's blue.
@@ -90,6 +116,7 @@ can optimize my future sessions to produce less churn".
   the share. The whole session's turns against the month's of this month,
   so it is capped at the whole.
   `test_the_context_chart_gets_every_reply_or_an_even_few`,
+  `test_the_context_chart_says_where_each_turn_begins`,
   `test_the_session_s_charts_and_its_bar_on_the_month_s_scale`.
   - **Both views have the same numbered parts, each with the question it
     answers** (`putSumPart`, `.sumgroup`, `.sumask`): what it cost, where
@@ -107,8 +134,7 @@ can optimize my future sessions to produce less churn".
     (`summary_json`), and `Costs` counts no calls by tool.
   - **The two views stand side by side from 1136 px of pane** (#683): each
     needs 540 px, so they do on a 1920 px screen with the session list
-    open. The cards of a view are `auto-fill`, so a narrow view gets one
-    column with no media query.
+    open.
     `test_the_statistics_tab_uses_a_wide_screen`.
 - **The session's time and tokens are charts, not tiles** (#688,
   `putSumClock`, `putSumKinds`, `TOKEN_KINDS`, `weighted`): the reader

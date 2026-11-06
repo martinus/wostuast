@@ -28525,7 +28525,10 @@ function drawSummary(box) {
   // The width too: the charts are drawn at the width they are shown at.
   if (!fresh(box, "summaryKey", JSON.stringify([state.chosen, got, state.spend, allowance,
                                                 box.clientWidth]))) return;
-  box.replaceChildren();
+  // Built under the old one, which goes after: a chart measures its width
+  // as it is drawn, and in a box emptied first that moved the scroll to the
+  // top on every poll.
+  const old = [...box.children];
   const pane = put(box, "div", "summary");
   // All sessions this month, and beside it this session (#653), in the
   // same parts (#723), the month on the left as the reader chose. A switch
@@ -28539,6 +28542,7 @@ function drawSummary(box) {
   put(mine, "h2", "sumview", "This session");
   putSession(mine, got);
   rowParts(mine);
+  old.forEach((one) => one.remove());
 }
 
 // The tab again when its box changes width: its charts are drawn at the
