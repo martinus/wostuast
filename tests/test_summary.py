@@ -305,10 +305,38 @@ def test_the_daemon_reads_the_month_s_turns_of_the_sessions_it_keeps(ws, transcr
     # And its tool results kept in context, from the same reading.
     assert [(one["call"], one["what"], one["tokens"]) for one in got["carried"]["results"]] \
         == [("t1", "cat big", 100)]
+    # And its tokens by kind (#722), from the same reading.
+    assert got["kinds"]["tokens"]["output_tokens"] == 900
+    assert got["kinds"]["tokens"]["cache_read_input_tokens"] == 2000
     # Read on from where it stopped, by the same reader.
     reader = daemon.cost_readers[path]
     daemon.spend(now)
     assert daemon.cost_readers[path] is reader
+
+
+def test_the_month_s_tokens_are_its_turns_by_kind_and_by_what_they_cost(ws):
+    """The reader asked for the session's bar of what its tokens cost, for
+    the whole month (#722): the tokens of the turns that began this month,
+    of every session the daemon keeps, by kind, and weighed as a session's
+    are. A turn of last month counts nothing."""
+    import time
+
+    now = time.time()
+    turn = ws.TurnCost
+    costs = {"s1": ws.Costs(turns=[
+                 turn(ts=now, tokens={"output_tokens": 100, "input_tokens": 10}),
+                 turn(ts=now - 40 * 86400, tokens={"output_tokens": 7000})]),
+             "s2": ws.Costs(turns=[
+                 turn(ts=now, tokens={"output_tokens": 20, "cache_read_input_tokens": 3000}),
+                 turn(ts=0.0, tokens={"output_tokens": 9000})])}
+    got = ws.month_tokens_json(now, costs)
+    assert got["tokens"] == {"output_tokens": 120, "input_tokens": 10,
+                             "cache_read_input_tokens": 3000}
+    assert got["weighted"] == {key: round(count * ws.TOKEN_WEIGHTS[key], 1)
+                               for key, count in got["tokens"].items()}
+    # As a session's are weighed: one place holds the weights.
+    session = ws.tokens_json(costs["s2"].turns[:1])
+    assert session["weighted"]["output_tokens"] == got["weighted"]["output_tokens"] * 20 / 120
 
 
 def test_a_tool_result_costs_each_later_reply_until_the_context_goes(ws, tmp_path):
