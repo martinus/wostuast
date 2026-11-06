@@ -79,8 +79,9 @@ Everything wostuast does, and how to use each part. The
   the repository and the worktree, the branch and its git status, and what
   the agent is doing now. Hover over the repository to see its remote, or
   over the worktree to see its full path. Click the worktree to copy that
-  path, for example to tell another session where to read; the click also
-  opens the session. When the agent opened a pull request,
+  path, for example to tell another session where to read. Click the
+  repository to copy its remote, or its name when it has none, and the
+  branch to copy its name. The click also opens the session. When the agent opened a pull request,
   or works on one, its number stands after the branch, such as `#12`. Click
   it to open the pull request in a new tab. The colour of the card shows the state.
   In a command shown on one line, what looks like a password or a token is

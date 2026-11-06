@@ -148,6 +148,12 @@ lines and icons, the chosen row, the grip, drags, folds, rows kept.
     only copied opened nothing there (14 tests went red). **A ticket link
     in it opens and copies nothing**: the handler leaves a click on an `a`
     alone. `test_a_rows_worktree_copies_its_whole_path`.
+  - **The repository and the branch copy too** (#725), as the reader
+    asked: the repository its remote, which its hover shows, or its name
+    when it has none; the branch its name. **The hover keeps what it said
+    and adds the click under it** (`offerCopy`'s `said`): "no remote"
+    stays over a repository that copies its name.
+    `test_a_rows_repository_and_branch_copy_too`.
   - **Not the state**: edge, tint and group say it. Only a finished row
     keeps the word, because "ended" and "killed" share a group and a grey.
   - **The name is the one Claude Code shows** (`rowName`, `Session.title`,

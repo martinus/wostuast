@@ -16058,11 +16058,12 @@ body.dragging.rowdrag { cursor: row-resize; }
 .freshfacts .repo, .freshfacts .worktree, .freshfacts .branch {
   display: inline-flex; align-items: center; gap: 4px; min-width: 0;
 }
-/* A row's worktree copies its path on a click (issue 715), and says so. */
-.worktree.copies { cursor: copy; }
-.worktree.copies:hover > .text { text-decoration: underline dotted; text-underline-offset: 2px; }
-.worktree.copied > .text::after { content: " \00b7 copied"; color: var(--done); }
-.worktree.uncopied > .text::after { content: " \00b7 not copied"; color: var(--needs); }
+/* A row's repository, worktree and branch copy on a click (issues 715,
+   725), and say so. */
+.copies { cursor: copy; }
+.copies:hover > .text { text-decoration: underline dotted; text-underline-offset: 2px; }
+.copied > .text::after { content: " \00b7 copied"; color: var(--done); }
+.uncopied > .text::after { content: " \00b7 not copied"; color: var(--needs); }
 /* Repository and worktree share their line, and either gives way. */
 .row .line2.where, .freshfacts .where { gap: 14px; color: var(--ink-mute); }
 .row .line2 .text, .freshfacts .text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -20423,12 +20424,18 @@ function putFact(line, cls, icon, text, title) {
 // absolute path, as the reader asked, to tell one session to read another's
 // worktree. The Info tab that showed it went. The row's line shows only the
 // folder's name; its hover says the path and that a click copies it. The
+// repository and the branch copy too (#725), as the reader asked: the
+// repository its remote, which its hover shows, or its name with none; the
+// branch its name. The
 // click goes on to choose the row: the name stands in the row's middle,
 // where a reader clicks to open a session, and a click that only copied
 // opened nothing there. A ticket link in the name opens, and copies nothing.
-function offerCopy(part, text) {
+//
+// The hover keeps what it said, and says the click under it: "no remote"
+// stays, over a repository that copies its name.
+function offerCopy(part, text, said = "click to copy") {
   part.classList.add("copies");
-  part.title = text + "\nclick to copy";
+  part.title = part.title + "\n" + said;
   part.addEventListener("click", async (press) => {
     if (press.target.closest("a")) return;
     const done = await copyToClipboard(text);
@@ -20443,7 +20450,10 @@ function fillRowPlace(where, s, links) {
   if (fresh(where, "text", JSON.stringify([s.repo, s.remote, s.worktree,
                                            s.worktree_path, links]))) {
     where.replaceChildren();
-    if (s.repo) putFact(where, "repo", "repo", s.repo, s.remote || "no remote");
+    if (s.repo) {
+      const part = putFact(where, "repo", "repo", s.repo, s.remote || "no remote");
+      offerCopy(part, s.remote || s.repo, s.remote ? undefined : "click to copy its name");
+    }
     if (s.worktree) {
       const part = putFact(where, "worktree", "dir", s.worktree, s.worktree_path || "");
       if (s.worktree_path) offerCopy(part, s.worktree_path);
@@ -20458,7 +20468,7 @@ function fillRowGit(two, s, links) {
                                          s.touched_files, s.doing, s.conflicts,
                                          links, s.pr]))) {
     two.replaceChildren();
-    if (s.branch) putFact(two, "branch", "branch", s.branch, s.branch);
+    if (s.branch) offerCopy(putFact(two, "branch", "branch", s.branch, s.branch), s.branch);
     putPrLink(two, s.pr);
     // What git counts, at the right edge, so the counts of every row stand
     // in one column however long each branch is.
