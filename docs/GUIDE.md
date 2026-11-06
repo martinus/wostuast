@@ -478,7 +478,12 @@ running total and what each day cost. Point at a day to read its amount.
 Set an **allowance** in the settings to see it as a line, and how much is
 left or over. The page only shows it: nothing stops an agent.
 
-Under the charts are the costliest sessions of the month, by what each
+Under the charts, a bar shows what the month's tokens cost, by kind, as
+the bar for one session does: output, cache written, input and cache read.
+It counts the turns that began this month, of the sessions that wostuast
+still keeps.
+
+Under it are the costliest sessions of the month, by what each
 spent this month, and the costliest turns of all sessions. Point at one to
 see on the charts the days it spent. Click a session to see its own
 statistics. Click a turn to read it in its transcript. The turns come only

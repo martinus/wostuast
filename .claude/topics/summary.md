@@ -163,6 +163,14 @@ can optimize my future sessions to produce less churn".
   a hover (`ALLOWANCE_WHERE`), as the reader asked: on the tile, the
   chart's label, and the note when none is set.
   `test_the_statistics_tab_draws_the_month_against_the_allowance`.
+- **The month has the session's bar of what its tokens cost** (#722,
+  `month_tokens_json`, `tokens_json`, `putSumKinds`), as the reader asked:
+  under the month's two charts. Its tokens are those of the turns that
+  began this month, of the sessions the daemon keeps, as for the costliest
+  turns. **One function counts and weighs tokens by kind** (`tokens_json`),
+  for the session and the month: the weights stay in one place.
+  `test_the_month_s_tokens_are_its_turns_by_kind_and_by_what_they_cost`,
+  `test_the_month_names_its_costliest_sessions_and_turns`.
 - **The month names its costliest sessions and turns** (#698,
   `month_costly_json`, `putMonthSessions`, `putMonthTurns`), as the reader
   asked. A session's amount is how much its total grew this month

@@ -10452,6 +10452,20 @@ def carried_json(carry: Carry, cost: float | None, total: float) -> dict[str, An
                         for one, weight, replies in worst if weight]}
 
 
+def tokens_json(turns: Iterable[TurnCost]) -> dict[str, dict[str, Any]]:
+    """The tokens of some turns by kind, and the same by `TOKEN_WEIGHTS`,
+    for the bar of what each kind cost (#688): a session's
+    (`summary_json`) and the month's (#722). The weights stay here, in one
+    place."""
+    tokens: dict[str, int] = {}
+    for turn in turns:
+        for key, count in turn.tokens.items():
+            tokens[key] = tokens.get(key, 0) + count
+    return {"tokens": tokens,
+            "weighted": {key: round(count * TOKEN_WEIGHTS.get(key, 0.0), 1)
+                         for key, count in tokens.items()}}
+
+
 def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
     """Where a session's tokens and time went, for the Summary tab (#622).
 
@@ -10460,10 +10474,6 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
     """
     status = session.status
     total = sum(turn.weight for turn in costs.turns)
-    tokens: dict[str, int] = {}
-    for turn in costs.turns:
-        for key, count in turn.tokens.items():
-            tokens[key] = tokens.get(key, 0) + count
     worst = sorted(costs.turns, key=lambda turn: -turn.weight)[:COSTLY_SHOWN]
     kinds: dict[str, dict[str, Any]] = {}
     for one in session.subagents.values():
@@ -10482,11 +10492,8 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
         "busy": round(session.busy + (max(0.0, session.turn_last - session.turn_began)
                                       if session.turn_began else 0.0), 1),
         "turns": len([turn for turn in costs.turns if turn.seq >= 0]),
-        "tokens": tokens,
-        # The same tokens by `TOKEN_WEIGHTS`, for the bar of what each kind
-        # cost (#688): the weights stay here, in one place.
-        "weighted": {key: round(count * TOKEN_WEIGHTS.get(key, 0.0), 1)
-                     for key, count in tokens.items()},
+        # Its tokens by kind, and by `TOKEN_WEIGHTS` (#688).
+        **tokens_json(costs.turns),
         # Its weight draws its bar (#685): the dollars are None when the
         # status line says no cost, and the weight is there always.
         "costly": [{"seq": turn.seq, "said": turn.said, "ts": turn.ts,
@@ -10584,6 +10591,16 @@ def month_costly_json(now: float, statuses: dict[str, Status],
     return {"sessions": sorted((one for one in sessions if one["usd"] > 0),
                                key=lambda one: -one["usd"])[:COSTLY_SHOWN],
             "turns": sorted(turns, key=lambda one: -one["usd"])[:COSTLY_SHOWN]}
+
+
+def month_tokens_json(now: float, costs: dict[str, Costs]) -> dict[str, dict[str, Any]]:
+    """The tokens of this calendar month's turns, of all sessions the
+    daemon keeps, by kind and by what they cost (#722), as the reader
+    asked: the session's bar, for the whole month. A turn is this month's
+    when it began in it, as for the month's costliest turns."""
+    month = local_day(now)[:8]
+    return tokens_json(turn for held in costs.values() for turn in held.turns
+                       if turn.ts and local_day(turn.ts).startswith(month))
 
 
 def month_carried_json(now: float, statuses: dict[str, Status],
@@ -11043,7 +11060,9 @@ class Daemon:
             return {**spend_json(now, [status.days for status in statuses.values()]),
                     **month_costly_json(now, statuses, costs),
                     # The tool results kept in context, and by tool.
-                    "carried": month_carried_json(now, statuses, costs)}
+                    "carried": month_carried_json(now, statuses, costs),
+                    # Its tokens by what they cost (#722).
+                    "kinds": month_tokens_json(now, costs)}
 
     def spend_statuses(self) -> dict[str, Status]:
         """Each status file, by its session's id, read again only when the
@@ -28405,6 +28424,9 @@ function putSpend(pane, spend, allowance) {
   const run = putSpendRun(pane, spend, allowance, pace);
   put(pane, "h3", "sumtitle", "each day");
   const charts = { run, each: putSpendDays(pane, spend) };
+  // The session's bar of what its tokens cost, for the whole month (#722):
+  // the turns that began this month, of the sessions the daemon keeps.
+  putSumKinds(pane, spend.kinds || {});
   const cards = put(pane, "div", "sumcards");
   putMonthSessions(cards, spend.sessions || [], charts);
   putMonthTurns(cards, spend.turns || [], charts);

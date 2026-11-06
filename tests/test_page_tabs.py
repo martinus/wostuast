@@ -1278,7 +1278,10 @@ def test_the_month_names_its_costliest_sessions_and_turns(pair_at):
              "turns": [{"id": "s1", "name": "A session", "said": "Do the thing.",
                         "ts": called, "usd": 1.5, "tokens": {"output_tokens": 9000}},
                        {"id": "gone", "name": "Port the map", "said": "the iterator",
-                        "ts": called, "usd": 0.5, "tokens": {}}]}
+                        "ts": called, "usd": 0.5, "tokens": {}}],
+             # Its tokens by what they cost (#722): output three quarters.
+             "kinds": {"tokens": {"output_tokens": 1000, "cache_read_input_tokens": 50000},
+                       "weighted": {"output_tokens": 75.0, "cache_read_input_tokens": 25.0}}}
     with opened(path) as page:
         page.route("**/api/spend", lambda route: route.fulfill(
             status=200, content_type="application/json", body=json.dumps(month)))
@@ -1299,6 +1302,11 @@ def test_the_month_names_its_costliest_sessions_and_turns(pair_at):
         assert lines("costliest turns") == [
             ["\u2248$1.50", mine + " \u00b7 Do the thing.", False],
             ["\u2248$0.50", "Port the map \u00b7 the iterator", True]]
+        # The session's bar of what the tokens cost, for the whole month,
+        # as the reader asked (#722).
+        bar = page.locator(".sumpart.month .kindbar")
+        assert bar.locator(".kindshare").all_inner_texts() == ["75%", "25%"]
+        assert "output: 1k tokens" in bar.get_attribute("aria-label")
         # The month's bars are its charts' colour; the session's another.
         colour = "(selector) => getComputedStyle(document.querySelector(selector)).backgroundColor"
         spend = page.evaluate("getComputedStyle(document.querySelector('.spendday')).fill")
