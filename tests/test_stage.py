@@ -124,7 +124,10 @@ def test_it_draws_the_settings_menu_from_a_file_and_steps(tmp_path):
          "--settings", links, "--click", "#settings",
          "--click", "#setpop .linkadd",
          "--type", "#linklist .linkrow:last-child .linkmatch=BUG-(",
-         "--eval", "document.querySelector('#setpop').dataset.staged = 'yes'",
+         # Longer than a file's name may be: asked whether it was a file,
+         # the disk answered with an error, and the picture was never drawn.
+         "--eval", "/* " + "a mockup " * 40 + "*/"
+                   " document.querySelector('#setpop').dataset.staged = 'yes'",
          "--part", "#setpop[data-staged='yes'] #linklist .linkrow:first-child"],
         capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr

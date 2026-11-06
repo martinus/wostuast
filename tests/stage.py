@@ -369,6 +369,19 @@ def review() -> str:
                      for line, note in zip(LINES, NOTES)]})
 
 
+def script_of(value: str) -> str:
+    """The code in `value`, or in the file it names. Code longer than a
+    file's name may be is code, as in `tour.py` and `shot.py`: asked
+    whether it was a file, the disk answered with an error, and the
+    picture was never drawn."""
+    try:
+        if Path(value).is_file():
+            return Path(value).read_text()
+    except OSError:
+        pass
+    return value
+
+
 def main(argv: list[str]) -> int:
     ask = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ask.add_argument("out")
@@ -456,8 +469,7 @@ def main(argv: list[str]) -> int:
             else:
                 # A file of it, as tour.py takes: a mockup that carries a
                 # font is longer than a command line may be.
-                page.evaluate(Path(value).read_text() if Path(value).is_file()
-                              else value)
+                page.evaluate(script_of(value))
         # Only an animation that ends: a row that needs you pulses for ever,
         # and a wait for no animation at all never ended on one.
         page.wait_for_function(

@@ -117,6 +117,11 @@ before every `replace`. Its scars:
   took `setReminder`, and the page still parsed. After such an edit,
   every line this prints is a function gone or added:
   `diff <(git show HEAD:wostuast | grep -o "^\(async \)\?function [a-zA-Z]*" | sort) <(grep -o "^\(async \)\?function [a-zA-Z]*" wostuast | sort)`
+- **Never anchor an insert after a line that ends in a comma; anchor on
+  the rule's closing `}`.** In CSS such a line is part of a selector list,
+  and the text put after it joined the list: `.row .line2 .branch,` took a
+  new rule's selector, and the row's facts lost `min-width: 0` (#715; 14
+  sidebar tests went red).
 - **Cut a function past `LINES_MOST` with an edit script that asserts no
   comment line is lost or doubled, `#` and `//` both** (#578). A change
   that would pass the limit first moves the part it touches into a helper,
@@ -156,7 +161,8 @@ None is a test. Each is kept working by its own test file:
   (skills and used commands), `--merge` (the branch ends in a merge
   settled by hand), `--fresh` (a session with no prompt yet, so no
   transcript), then `--click`, `--type SELECTOR=TEXT` (and
-  Enter), `--keys SELECTOR=TEXT` and `--eval JS` in order, and `--part`.
+  Enter), `--keys SELECTOR=TEXT` and `--eval JS` (or a file) in order,
+  and `--part`.
 - `tests/tour.py`: six sessions, one in each state a row can be in, with
   saved turns and status lines; a PNG of each view: `transcript`, `later`,
   `unread`, `saved`, `search`, `permission`. `--view` picks; `--light`,
@@ -185,5 +191,7 @@ None is a test. Each is kept working by its own test file:
 - `tests/pair.py`: pictures side by side, each under its label, in one
   PNG; `--clip` cuts each to one part. The before and after a look change
   waits on.
-- `tests/perturb.py`: applies each break in a JSON list, runs only the
-  tests it names, puts the file back, and prints red or GREEN a line.
+- `tests/perturb.py`: runs the tests each break names on the code as it
+  is, and stops if one is red; then applies each break in a JSON list,
+  runs only the tests it names, puts the file back, and prints red or
+  GREEN a line.
