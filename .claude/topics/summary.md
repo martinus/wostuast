@@ -120,8 +120,7 @@ can optimize my future sessions to produce less churn".
   `test_the_session_s_charts_and_its_bar_on_the_month_s_scale`.
   - **Both views have the same numbered parts, each with the question it
     answers** (`putSumPart`, `.sumgroup`, `.sumask`): what it cost, where
-    the money went, where the time went. The month has no third: the
-    status lines keep no time.
+    the money went, where the time went.
   - **A list's note is one short line, or none; the whole explanation is
     on a hover of its title** (`putSumNote`, `.sumtitle.explained`): notes
     of two and three lines over every list were most of what the tab said.
@@ -330,3 +329,20 @@ can optimize my future sessions to produce less churn".
   `lasted` wrote "0s" and "1min".
   `test_a_session_s_time_goes_by_tool_and_its_slowest_calls_are_kept`,
   `test_the_statistics_tab_says_where_the_time_went_by_tool`.
+- **The month has its own "Where the time went"** (`month_time_json`,
+  `putMonthTime`, `putMonthBusy`, `putMonthSlow`), as the reader asked,
+  bending the non-goal of accounting across sessions (topics/goals): how
+  long all sessions were busy each day, a column a day on the dollars'
+  frame (`putMonthChart`'s `unit`), their calls' time by tool, and the
+  slowest calls with their sessions' names; a click opens one in its
+  session's transcript. **The fold keeps the time by local day**
+  (`Session.busy_days`, on the day a turn began; `tool_days`), under the
+  same guards as `busy` and `tool_time`, so a month counts only its own
+  days. **The slowest are those each session keeps** (`SLOW_KEPT`) that
+  began this month: a session over two months can hide some of this
+  month's. Of the sessions the daemon keeps, as the costliest turns are.
+  `month_time_json` copies each dict before it reads it: the tick adds to
+  them while a request reads.
+  `test_a_session_keeps_its_time_by_day`,
+  `test_the_month_s_time_counts_this_month_s_days_of_every_session`,
+  `test_the_month_says_where_the_time_went`.

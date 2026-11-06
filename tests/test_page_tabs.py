@@ -1111,6 +1111,52 @@ def test_the_statistics_tab_says_where_the_time_went_by_tool(ws, page_at):
           .some((one) => one.textContent.includes('grep -r parse'))""")
 
 
+def test_the_month_says_where_the_time_went(ws, page_at):
+    """The month has its own part 3, as the reader asked: how long all
+    sessions were busy each day, a column a day, their calls' time by tool,
+    and their slowest calls with their sessions' names; a click opens one
+    in its session's transcript."""
+    daemon, path = page_at
+    now = time.time()
+    at = lambda moment: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(moment))
+    write_records(daemon, conftest.record("you", "Run the tests.", ts=at(now - 600)),
+                  conftest.record("tool", "make test", tool_id="g1", ts=at(now - 330)),
+                  conftest.record("result", "ok", tool_id="g1", ts=at(now - 300)),
+                  *[conftest.record(*one, ts=at(now + 120 + step)) for step in range(30)
+                    for one in (("you", f"Next step {step}."), ("claude", "Done.\n\n" * 6))])
+    for name, moment, extra in (
+            ("UserPromptSubmit", now - 600, dict(prompt="Run the tests.")),
+            ("PostToolUse", now - 300, dict(tool_name="Bash", tool_use_id="g1",
+                                            tool_input={"command": "make test"},
+                                            duration_ms=30_000)),
+            ("Stop", now - 60, {})):
+        ws.append_event(conftest.event(name, ts=moment, pane="%7", pid=1, **extra))
+    daemon.store.refresh()
+    ws.write_status("s1", ws.Status(cost_usd=1.0, days={time.strftime("%Y-%m-%d"): 1.0}))
+    month = ".sumpart.month"
+    with opened(path) as page:
+        wait_for_map(page)
+        page.keyboard.press("4")
+        show_month(page)
+        page.evaluate("loadSpend()")
+        part = page.locator(f"{month} .sumgroup", has_text="Where the time went")
+        part.locator(".busyday").wait_for(state="attached")
+        assert part.locator(".busyday").count() == 1
+        assert part.locator(".spendtick").first.text_content() == "0h", "hours, not dollars"
+        today = int(time.strftime("%d"))
+        assert part.locator(".spendhit title").nth(today - 1).text_content() \
+            .endswith(": 9min busy")
+        assert part.locator(".sumline", has_text="Bash \u00b7 1 call").inner_text() \
+            .startswith("30s")
+        slow = part.locator(".sumline.turnlink", has_text="make test")
+        name = page.evaluate("rowName(state.sessions.find((s) => s.id === 's1'))")
+        assert slow.locator(".sumwho").inner_text().startswith(name)
+        slow.click()
+        page.wait_for_function("document.body.classList.contains('sidechat')")
+        page.wait_for_function("""() => [...document.querySelectorAll('#chat .turn.linked')]
+          .some((one) => one.textContent.includes('make test'))""")
+
+
 def show_month(page):
     """All sessions this month, beside the session or under it."""
     page.wait_for_selector(".sumpart.month")

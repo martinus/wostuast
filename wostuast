@@ -1614,6 +1614,11 @@ class Session:
     slow_calls: list[SlowCall] = field(default_factory=list)
     tools_upto: float = 0.0
     tools_at: set[str] = field(default_factory=set)
+    #: The same by local day, for the month's "Where the time went": the
+    #: seconds its turns ran, on the day each began, and its calls'
+    #: [calls, seconds] by tool (`count_turn`, `note_tool_time`).
+    busy_days: dict[str, float] = field(default_factory=dict)
+    tool_days: dict[str, dict[str, list[float]]] = field(default_factory=dict)
     git: GitFacts = field(default_factory=GitFacts)
     status: Status = field(default_factory=Status)
 
@@ -3789,6 +3794,9 @@ def note_tool_time(session: Session, event: dict[str, Any], name: str, ts: float
     held = session.tool_time.setdefault(tool, [0, 0.0])
     held[0] += 1
     held[1] += seconds
+    daily = session.tool_days.setdefault(local_day(ts), {}).setdefault(tool, [0, 0.0])
+    daily[0] += 1
+    daily[1] += seconds
     if seconds < SLOW_LEAST:
         return
     one = SlowCall(tool=tool, seconds=seconds, began=ts - seconds,
@@ -3803,8 +3811,12 @@ BUSY_WORK = frozenset({"PreToolUse", "PostToolUse", "PostToolUseFailure",
 
 
 def count_turn(session: Session, end: float) -> None:
-    """The running turn ends at `end`, and its time counts (`note_busy`)."""
-    session.busy += max(0.0, end - session.turn_began)
+    """The running turn ends at `end`, and its time counts (`note_busy`),
+    on the day it began too."""
+    took = max(0.0, end - session.turn_began)
+    session.busy += took
+    day = local_day(session.turn_began)
+    session.busy_days[day] = session.busy_days.get(day, 0.0) + took
     session.busy_upto = end
     session.turn_began = 0.0
 
@@ -10624,6 +10636,41 @@ def month_spent(now: float, days: dict[str, float]) -> float:
     return sum(usd for day, usd in spend_by_day([days]).items() if day.startswith(month))
 
 
+def month_time_json(now: float, sessions: Iterable[Session]) -> dict[str, Any]:
+    """Where all sessions' time went this calendar month, as the reader
+    asked: how long their turns ran each day, their calls' time by tool, and
+    the slowest of the calls each session keeps (`SLOW_KEPT`) that began
+    this month. Of the sessions the daemon keeps, as the costliest turns
+    are; a session quiet for `SESSION_MAX_AGE` is gone. Its days are copied
+    first: the tick adds to them while a request reads."""
+    today = local_day(now)
+    month, upto = today[:8], int(today[8:])
+    busy = [0.0] * upto
+    tools: dict[str, list[float]] = {}
+    slow: list[tuple[SlowCall, str]] = []
+    for session in sessions:
+        for day, seconds in list(session.busy_days.items()):
+            if day.startswith(month) and int(day[8:]) <= upto:
+                busy[int(day[8:]) - 1] += seconds
+        for day, by_tool in list(session.tool_days.items()):
+            if not day.startswith(month):
+                continue
+            for tool, (calls, seconds) in list(by_tool.items()):
+                held = tools.setdefault(tool, [0, 0.0])
+                held[0] += calls
+                held[1] += seconds
+        slow += [(one, session.session_id) for one in list(session.slow_calls)
+                 if local_day(one.began).startswith(month)]
+    slow.sort(key=lambda one: -one[0].seconds)
+    return {"busy": [round(seconds, 1) for seconds in busy],
+            "tool_time": [{"tool": tool, "calls": int(calls), "seconds": round(seconds, 3)}
+                          for tool, (calls, seconds) in sorted(
+                              tools.items(), key=lambda one: (-one[1][1], one[0]))],
+            "slow": [{"id": session_id, "tool": one.tool, "what": one.what,
+                      "seconds": round(one.seconds, 3), "began": round(one.began, 3)}
+                     for one, session_id in slow[:SLOW_KEPT]]}
+
+
 def month_costly_json(now: float, statuses: dict[str, Status],
                       costs: dict[str, Costs]) -> dict[str, Any]:
     """The sessions that spent the most this calendar month, and the turns
@@ -11142,7 +11189,9 @@ class Daemon:
                     # The tool results kept in context, and by tool.
                     "carried": month_carried_json(now, statuses, costs),
                     # Its tokens by what they cost (#722).
-                    "kinds": month_tokens_json(now, costs)}
+                    "kinds": month_tokens_json(now, costs),
+                    # Where their time went, from the fold.
+                    "time": month_time_json(now, list(self.store.sessions.values()))}
 
     def spend_statuses(self) -> dict[str, Status]:
         """Each status file, by its session's id, read again only when the
@@ -16631,6 +16680,7 @@ body.switching #content::after {
 .spendlimit { stroke: var(--ink-mute); stroke-width: 1; }
 .spenddot { fill: var(--spend); stroke: var(--bg); stroke-width: 2; }
 .spendday { fill: var(--spend); }
+.busyday { fill: var(--spend); }
 .spendhit { fill: transparent; }
 .spendweekend { fill: color-mix(in srgb, var(--ink) 4%, transparent); }
 .spendwday { fill: var(--ink-faint); font-family: var(--sans); font-size: 12px; }
@@ -28590,8 +28640,7 @@ function putSumPart(parent, number, title, question) {
 }
 
 // This session (#622), in the parts the month has too (#723): what it
-// cost, where the money went, where the time went. The month has no
-// third: the status lines keep no time.
+// cost, where the money went, where the time went.
 function putSession(part, got) {
   if (!got) { put(part, "p", "sumnote", "Reading the transcript\u2026"); return; }
   putSumHead(part, got);
@@ -28711,6 +28760,7 @@ function putSpend(pane, spend, allowance) {
   putMonthSessions(cards, spend.sessions || [], charts);
   putMonthTurns(cards, spend.turns || [], charts);
   putMonthCarried(cards, spend.carried, charts, spent);
+  putMonthTime(pane, spend);
 }
 
 // The sessions that spent the most this month (#698), as the reader asked:
@@ -28834,6 +28884,66 @@ function putMonthCarried(pane, carried, charts, spent) {
 }
 
 // Where the allowance is changed, on a hover over the word (#653).
+// Where all sessions' time went this month, as the reader asked for the
+// month's own part 3: how long they were busy each day, what their tools
+// took, and their slowest calls. Of the sessions wostuast keeps.
+function putMonthTime(pane, spend) {
+  const time = spend.time;
+  if (!time || !(time.busy || []).some((one) => one > 0)) return;
+  const part = putSumPart(pane, 3, "Where the time went", "How long all sessions were busy"
+                          + " each day, what their tools took, and their slowest calls.");
+  put(part, "h3", "sumtitle", "busy each day");
+  putMonthBusy(part, spend, time.busy);
+  const cards = put(part, "div", "sumcards");
+  putSumTime(cards, { tool_time: time.tool_time || [] });
+  putMonthSlow(cards, time.slow || []);
+}
+
+// The hours all sessions' turns ran each day, a column a day, as the
+// dollars' chart above has; a day's time on a hover.
+function putMonthBusy(pane, spend, busy) {
+  const hours = busy.map((seconds) => seconds / 3600);
+  const chart = putMonthChart(pane, spend, 150, Math.max(...hours, 0.1), 3,
+                              "busy each day this month",
+                              (h) => (Number.isInteger(h) ? h : h.toFixed(1)) + "h");
+  hours.forEach((h, at) => {
+    const d = spendColumn(chart, at, h);
+    if (d) putSvg(chart.svg, "path", { class: "busyday", d });
+  });
+  busy.forEach((seconds, at) => putSpendHit(chart, at + 1, seconds ? lasted(seconds) + " busy"
+                                            : "not busy", spend));
+}
+
+// The slowest calls of the month, each with its session's name, as the
+// month's costliest turns have; a click opens it in its session's
+// transcript. A session the page no longer has is named, not linked.
+function putMonthSlow(pane, slow) {
+  if (!slow.length) return;
+  const card = putSumCard(pane, "slowest calls, a second or more");
+  putSumNote(card, "Of the sessions wostuast keeps.", "Each session keeps its own slowest"
+             + " calls; these are the slowest of them that began this month.");
+  const list = put(card, "div", "sumlist");
+  const most = Math.max(...slow.map((one) => one.seconds)) || 1;
+  for (const one of slow) {
+    const s = state.sessions.find((x) => x.id === one.id);
+    const line = put(list, "button", "sumline turnlink");
+    put(line, "span", "sumnum", callTime(one.seconds));
+    putSumBar(line, one.seconds / most);
+    const said = put(line, "span", "sumsaid");
+    put(said, "span", "sumwho", (s ? rowName(s) : one.id.slice(0, 8)) + " \u00b7 ");
+    said.append(one.tool + " \u00b7 " + one.what);
+    if (!s) { line.disabled = true; continue; }
+    line.title = "show this call in its session's transcript";
+    line.addEventListener("click", () => {
+      choose(one.id);
+      // `goTo` says a block is asked for at all; the moment says which.
+      state.turns.goTo = 0;
+      state.turns.goToNear = one.began;
+      showInChat();
+    });
+  }
+}
+
 const ALLOWANCE_WHERE = "change it in the settings: the sliders at the end of the tab row,"
   + " under Page";
 
@@ -28881,8 +28991,9 @@ function workdaysLeft(spend) {
 }
 
 // A chart of one month: its box, its scales, the dollar lines and the days
-// under it. `most` is the highest amount it must hold.
-function putMonthChart(pane, spend, height, most, ticks, label) {
+// under it. `most` is the highest amount it must hold; `unit` says one on
+// its scale, dollars unless it is told.
+function putMonthChart(pane, spend, height, most, ticks, label, unit = cents) {
   const box = put(pane, "div", "spendchart");
   const width = chartWidth(box);
   const svg = putSvg(box, "svg", {
@@ -28905,7 +29016,7 @@ function putMonthChart(pane, spend, height, most, ticks, label) {
     putSvg(svg, "line", { class: "spendgrid", x1: CHART.left, x2: CHART.left + wide,
                           y1: chart.y(usd), y2: chart.y(usd) });
     putSvg(svg, "text", { class: "spendtick", x: CHART.left - 8, y: chart.y(usd) + 4,
-                          "text-anchor": "end" }).textContent = cents(usd);
+                          "text-anchor": "end" }).textContent = unit(usd);
   }
   const today = spend.days.length;
   for (let day = 1; day <= spend.length; day += 1) {
