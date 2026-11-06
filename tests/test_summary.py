@@ -7,6 +7,7 @@ import time
 
 import pytest
 
+import conftest
 from conftest import FIXTURES, event, record, records
 
 
@@ -236,6 +237,79 @@ def test_a_session_names_its_transcript_only_where_it_may_be_opened(ws, tmp_path
     for wrong in (str(tmp_path / "s1.jsonl"), str(inside.with_suffix(".txt")), ""):
         session.transcript_path = wrong
         assert ws.summary_json(session, ws.Costs())["transcript"] == "", wrong
+
+
+def test_what_could_be_cheaper_in_a_session(ws, tmp_path):
+    """Part 4, as the reader asked: a reply that writes its context to the
+    cache again, though the reply before had cached it, found the cache
+    gone; a pause says why, or a change of model. A Read of what is in
+    context already is a second copy. A turn begun on more than twice the
+    start cost its replies the old context. A context that fell is new: no
+    miss."""
+    path = tmp_path / "s1.jsonl"
+    path.write_text(records(*conftest.cheap_records()))
+    reader = ws.Transcript(str(path))
+    reader.read_new()
+    costs = reader.costs
+    assert [(one.turn, one.tokens, round(one.pause), one.model) for one in costs.misses] == [
+        (1, 12204, 601, False), (1, 12304, 9, True)]
+    total = sum(turn.weight for turn in costs.turns)
+    got = ws.cheaper_json(costs, 1.0, total)
+    assert got["misses"]["count"] == 2
+    assert [one["turn"] for one in got["misses"]["list"]] == [1, 1]
+    assert [(one["times"], one["tokens"]) for one in got["again"]] == [(2, 1000)]
+    assert got["again"][0]["what"].endswith("a.c") and got["again"][0]["weight"] > 0
+    assert [(one["turn"], one["began"], one["said"]) for one in got["large"]] == [
+        (2, 25000, "Now something else.")]
+    # The old part, past the start, at what a token of that reply cost.
+    assert got["large"][0]["weight"] == round(
+        (25000 - 10004) * (12504 * 0.1 + 12496 * 1.25) / 25000, 1)
+    # Other lines of the same file are no second copy; and what was in
+    # context is gone at a compaction.
+    assert ws.read_key({"file_path": "a", "offset": 10}) != ws.read_key({"file_path": "a"})
+    carry = ws.Carry(live_keys={"a::": 1})
+    carry.forget()
+    assert carry.live_keys == {}
+    # A compaction's small context, written whole, is new: no miss.
+    fell = ws.Costs()
+    for one in (reply(record("claude", "a"), "x1", cache_creation_input_tokens=50000),
+                reply(record("claude", "b"), "x2", cache_creation_input_tokens=9000)):
+        fell.take(one, [])
+    assert fell.misses == []
+
+
+def test_the_month_says_what_could_be_cheaper_for_all_sessions(ws):
+    """The month's part 4: what each model spent this month, each kept
+    session's misses this month, the files read in more than one session,
+    and the turns begun on a large context. Last month counts nothing."""
+    now = time.mktime((2026, 11, 3, 12, 0, 0, 0, 0, -1))
+    before = time.mktime((2026, 10, 30, 12, 0, 0, 0, 0, -1))
+    statuses = {"a": ws.Status(name="A", model="Opus 5.5", cost_usd=10.0,
+                               days={"2026-11-02": 10.0}),
+                "b": ws.Status(name="B", model_id="claude-sonnet", cost_usd=4.0,
+                               days={"2026-11-03": 4.0}),
+                "c": ws.Status(name="C", model="Opus 5.5", cost_usd=3.0,
+                               days={"2026-10-30": 3.0})}
+
+    def kept(*keys):
+        costs = ws.Costs(turns=[ws.TurnCost(ts=now, weight=1000.0, began=30000, read_per=0.01,
+                                            said="Go.")])
+        costs.carry.least = 10000
+        costs.carry.results = [ws.ResultCost(key=key, ts=now, tokens=1000.0, gone=True,
+                                             weight=100.0) for key in keys]
+        return costs
+
+    costs = {"a": kept("/w/x.md::", "/w/y.md::"), "b": kept("/w/x.md:10:")}
+    costs["a"].misses = [ws.CacheMiss(ts=now, pause=400.0, weight=50.0),
+                         ws.CacheMiss(ts=before, pause=400.0, weight=50.0)]
+    got = ws.month_cheaper_json(now, statuses, costs)
+    assert got["models"] == [{"model": "Opus 5.5", "usd": 10.0, "sessions": 1},
+                             {"model": "claude-sonnet", "usd": 4.0, "sessions": 1}]
+    assert [(one["id"], one["count"], one["pauses"], one["models"]) for one in got["misses"]] \
+        == [("a", 1, 1, 0)]
+    assert [(one["what"], one["sessions"], one["tokens"]) for one in got["files"]] == [
+        ("/w/x.md", 2, 1000)]
+    assert [(one["id"], one["began"]) for one in got["large"]] == [("a", 30000), ("b", 30000)]
 
 
 def test_a_resume_the_cache_did_not_outlast_says_what_its_next_prompt_costs(ws):

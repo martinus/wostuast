@@ -649,3 +649,35 @@ def two_repos(ws, served, repo, tmp_path):
                               ts=time.time(), pane="%7", pid=1))
     daemon.store.refresh()
     return repo, other, base
+
+
+def cheap_records(base=1_800_000_000.0):
+    """A session that read one file twice, found the cache gone after a
+    pause and after a change of model, and began a turn on old work."""
+    at = lambda seconds: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(base + seconds))
+
+    def said(kind, text, mid, seconds, model="claude-a", **used):
+        made = record(kind, text, ts=at(seconds), tool="Read", tool_id=mid)
+        made["message"].update(id=mid, model=model, usage=used)
+        return made
+
+    return [record("you", "Read a.c twice.", ts=at(0)),
+            said("tool", "/w/a.c", "m1", 1, input_tokens=4, cache_creation_input_tokens=10000,
+                 output_tokens=100),
+            record("result", "x" * 3000, tool_id="m1", ts=at(2)),
+            said("tool", "/w/a.c", "m2", 3, cache_read_input_tokens=10004,
+                 cache_creation_input_tokens=1100, output_tokens=100),
+            record("result", "x" * 3000, tool_id="m2", ts=at(4)),
+            said("claude", "ok", "m3", 60, cache_read_input_tokens=11104,
+                 cache_creation_input_tokens=1100, output_tokens=100),
+            # Ten minutes later the cache is gone: the whole context again.
+            record("you", "Go on.", ts=at(660)),
+            said("claude", "ok", "m4", 661, input_tokens=4, cache_creation_input_tokens=12300,
+                 output_tokens=100),
+            # Another model has no cache of this context.
+            said("claude", "ok", "m5", 670, model="claude-b", input_tokens=4,
+                 cache_creation_input_tokens=12500, output_tokens=100),
+            # A turn begun on all of it, cached: no miss, but old work.
+            record("you", "Now something else.", ts=at(700)),
+            said("claude", "ok", "m6", 701, cache_read_input_tokens=12504,
+                 cache_creation_input_tokens=12496, output_tokens=100)]
