@@ -251,7 +251,7 @@ where you left it: the tab, the open file, and your place in it.
 | **Transcript** | What the agent said and did, with a map of the conversation beside it. For a session that is over, the command that brings it back (`claude --resume`), to copy. |
 | **Files** | Every file in the worktree as a tree, with syntax colour and go-to-file. |
 | **Review** | What changed, file by file, with your comments on it and the bar to send them. |
-| **Statistics** | This session, and beside it all sessions this month: what it cost, where the money went (the costliest turns, the tool results that stayed in context longest), and for a session where the time went (by tool, the slowest calls, the subagents). The month adds what was spent each day, and the way to your allowance. |
+| **Statistics** | All sessions this month, and beside it this session: what it cost, where the money went (the costliest turns, the tool results that stayed in context longest), and for a session where the time went (by tool, the slowest calls, the subagents). The month adds what was spent each day, and the way to your allowance. |
 
 When a switch to another session or tab takes a moment, for example over a
 slow ssh tunnel, the old content dims and a label says what is loading. The
@@ -442,11 +442,11 @@ words marked.
 
 #### Statistics
 
-**This session** stands on the left and **This month, all sessions** on
-the right. In a narrow window, the month stands under the session. Both
-show the same parts in the same order, each on a panel of its own, and side
-by side a part stands level with its partner. Each part answers one
-question:
+**This month, all sessions** stands on the left and **This session** on
+the right. In a narrow window, the session stands under the month. Both
+show the same parts in the same order, each on a panel of its own. Side by
+side, part 1 stands level with its partner, and the parts after it follow
+each other in their own column. Each part answers one question:
 
 1. **What it cost.** The tokens as one bar in four parts: output, cache
    written, input and cache read. Each part is as wide as its share of what
@@ -456,7 +456,8 @@ question:
    in context.
 3. **Where the time went.** Only for one session: the month keeps no time.
 
-Point at the title of a list to read how it is counted.
+Point at the title of a list to read how it is counted. Every amount shows
+its cents, so the amounts line up.
 
 **This session.** At the top, what the session spent, as Claude Code
 estimates it, its turns, and the lines its edits added and removed.
@@ -464,10 +465,14 @@ estimates it, its turns, and the lines its edits added and removed.
 In part 1, two charts first. **Context, reply by reply** shows how many
 tokens each reply read, in the three colours of the list further down: the
 start, the conversation and the tool results. It grows with every reply, and
-falls at a compaction or a `/clear`. Point at it to read a reply's numbers.
+falls at a compaction or a `/clear`. Every other turn has a band behind
+it, and a line marks where each turn begins, so you see which turn read the
+most. Point at the chart to read a reply's numbers and its turn's prompt,
+and click to read the turn in the transcript beside the tab.
 **Each turn** shows what each turn cost, a column a turn, beside the month's
-column a day. Click a column to read the turn in the transcript beside the
-tab.
+column a day. Both charts give a turn its number in the session; a turn with
+no reply has no column. Click a column to read the turn in the transcript
+beside the tab.
 
 Then the bar of what the tokens cost. Side by side, it stands level with
 the month's bar, and it is as long as this session's share of the month,
