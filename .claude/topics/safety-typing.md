@@ -122,15 +122,21 @@ buffer, scrubbed, counted; a No, an interrupt, what a refusal says.
   refuses `-S`, so it pastes again without. A digit, Tab, Enter and every
   byte `tmux_send` passes go through `vis(3)` unchanged. Keys and the
   Escape leave copy mode first.
-  - **The page's stop is this Escape** (#714, `verb_interrupt`, `#stop`,
-    `stopAgent`), as the reader asked: beside send, only while the agent
-    works, so send still queues a message for a busy agent. Refused for an
+  - **The page's stop is this Escape** (#714, `verb_interrupt`, `#go`,
+    `paintGo`, `stopAgent`), as the reader asked. **One button, as on
+    claude.ai**: Enter's arrow, and a stop only while the agent works and
+    the box is empty; with words typed a click sends them, which a busy
+    agent queues. A stop beside send made the wrong one easy to press.
+    **Enter never stops**: it calls `sendTyped`, and only the button
+    submits the form. **Off while a send is on its way**: the send empties
+    the box, and the button turned into a stop under the pointer, so a
+    double-click stopped the agent just written to. Refused for an
     agent at its prompt, where Escape stops nothing, and while a dialog or a
     question is up (`cannot_type(text=True)`): there it is a No nobody
     chose. Held as a send is (`holding`, `startSending`). The turn's end
     comes from the transcript (#713, topics/state).
     `test_a_stop_is_one_escape_into_a_working_agent`,
-    `test_a_stop_stands_beside_send_while_the_agent_works`.
+    `test_the_send_box_button_stops_only_a_working_agent_with_nothing_typed`.
   `test_a_tmux_that_refuses_dash_s_still_gets_one_escape`,
   `test_interrupt_sends_escape_and_never_ctrl_c`,
   `test_synchronized_panes_get_no_answer_and_no_escape_of_ours`.

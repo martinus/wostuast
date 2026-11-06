@@ -71,7 +71,7 @@ rename, and the keys.
   `submitOnCtrlEnter` only clicks, so the button's checks run. **The
   button stands level with the box's first line**:
   `.say { line-height: 18px }` makes a line 32 px, as the button is
-  (`.say + .verb`; `.sendside > .verb` for the send box).
+  (`.say + .verb`; `.sendside > .go` for the send box, an icon, #714).
   `test_ctrl_enter_saves_a_comment_and_sends_the_review`,
   `test_ctrl_enter_sends_and_says_no_and_the_buttons_stand_level`.
   - **Every such box shows all it holds, its placeholder too**: `.say`
