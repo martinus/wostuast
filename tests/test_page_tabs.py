@@ -1096,7 +1096,7 @@ def test_the_statistics_tab_says_where_the_time_went_by_tool(ws, page_at):
         page.keyboard.press("4")
         page.wait_for_selector(".sumline.turnlink >> text=grep -r parse")
         text = page.locator(".summary").inner_text()
-        assert "TIME BY TOOL" in text.upper(), text
+        assert "TIME AND CALLS BY TOOL" in text.upper(), text
         times = page.locator(".sumline", has_text="Bash \u00b7 2 calls").inner_text()
         assert times.startswith("30s"), times
         slow = page.locator(".sumline.turnlink", has_text="grep -r parse")
@@ -1249,9 +1249,20 @@ def test_the_tool_results_kept_in_context_link_to_their_calls(page_at):
         title = card.locator(".sumline").first.get_attribute("title")
         assert title == "9k tokens, read by 1 reply, still in context:" \
                         " show this call in the transcript", title
-        # 10k tokens read at a tenth, of m1's 1,500 and m2's 1,160.
-        assert "All results together cost 38% of what this session spent." \
-            in card.inner_text()
+        # 10k tokens read at a tenth, of m1's 1,500 and m2's 1,160. One
+        # short line, and the whole explanation on a hover of the title
+        # (#723): notes of two and three lines hid the numbers.
+        assert card.locator(".sumnote").inner_text() == (
+            "A result costs again in every later reply, until a compaction or a"
+            " /clear. All of them: 38% of what this session spent.")
+        whole = card.locator(".sumtitle").get_attribute("title")
+        assert whole.startswith("Every later reply reads a tool's result again") \
+            and whole.endswith("All results together cost 38% of what this session spent."), whole
+        # The costliest turns say nothing under their title: the part's
+        # question says what the share is, and the hover says the rest.
+        turns = page.locator(".sumcard", has_text="costliest turns")
+        assert turns.locator(".sumnote").count() == 0
+        assert "subagents' too" in turns.locator(".sumtitle").get_attribute("title")
         # The second call of its reply.
         watch_landings(page)
         card.locator(".sumline", has_text="cat big").click()
@@ -1315,8 +1326,12 @@ def test_the_month_s_tool_results_kept_in_context_and_by_tool(pair_at):
         assert lines == [
             ["\u2248$1.20", mine + " \u00b7 9k \u00d7 40 \u00b7 Bash \u00b7 cat big", False],
             ["\u2248$0.30", "Port the map \u00b7 2k \u00d7 12 \u00b7 Read \u00b7 map.c", True]]
-        # Of the $6.00 the month's days spent.
-        assert "cost \u2248$1.50, 25% of what was spent." in card.inner_text()
+        # Of the $6.00 the month's days spent: one short line, and the
+        # whole on a hover of the title (#723).
+        assert card.locator(".sumnote").inner_text() == (
+            "All of them: \u2248$1.50, 25% of what was spent. Of the sessions wostuast keeps.")
+        assert "cost \u2248$1.50, 25% of what was spent." \
+            in card.locator(".sumtitle").get_attribute("title")
         tools = page.locator(".sumpart.month .sumcard", has_text="kept in context, by tool")
         assert tools.locator(".sumsaid").all_inner_texts() == [
             "Bash \u00b7 1 call \u00b7 9k tokens", "Read \u00b7 3 calls \u00b7 2k tokens"]

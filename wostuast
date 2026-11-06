@@ -16539,6 +16539,8 @@ body:has(.content[data-tab="summary"]) .findhome { display: none; }
   border-radius: 3px; vertical-align: -1px;
 }
 .sumnote { margin: 0 0 6px; font-size: 12px; color: var(--ink-faint); }
+/* A title whose hover explains its list (issue 723). */
+.sumtitle.explained { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
 .sumtitle {
   margin: 22px 0 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
   text-transform: uppercase; color: var(--ink-faint);
@@ -28461,6 +28463,17 @@ function putSumBar(line, share) {
   return bar;
 }
 
+// A list's note (#723): one short line, or none, and the whole
+// explanation on a hover of the list's title. Notes of two and three lines
+// over every list were most of what the tab said, and the reader could not
+// find the numbers among them.
+function putSumNote(card, short, whole) {
+  const title = card.querySelector(":scope > .sumtitle");
+  title.title = whole;
+  title.classList.add("explained");
+  if (short) put(card, "p", "sumnote", short);
+}
+
 // One list of the tab under its title, a card the grid lays out (#683).
 function putSumCard(parent, title) {
   const card = put(parent, "div", "sumcard");
@@ -28562,8 +28575,9 @@ function putMonthTurns(pane, turns, charts) {
   // the prompt its first letters.
   const card = putSumCard(pane, "costliest turns");
   card.classList.add("wide");
-  put(card, "p", "sumnote", "\u2248 is each turn's share of what its session spent,"
-      + " by the tokens its replies used. Only the sessions kept here are read.");
+  putSumNote(card, "Of the sessions wostuast keeps.", "\u2248 is each turn's share of"
+             + " what its session spent, by the tokens its replies used. Only the"
+             + " sessions kept here are read.");
   const list = put(card, "div", "sumlist");
   const most = turns[0].usd || 1;
   for (const one of turns) {
@@ -28609,11 +28623,13 @@ function putMonthCarried(pane, carried, charts, spent) {
   // a command in half a card left a few letters of each.
   const card = putSumCard(pane, "tool results kept in context");
   card.classList.add("wide");
-  put(card, "p", "sumnote", "Every later reply reads a tool's result again, until a"
-      + " compaction or a /clear. Each line: its tokens \u00d7 the replies that read them,"
-      + " and \u2248 what that cost. All results together cost \u2248" + money(carried.usd)
-      + (spent ? ", " + Math.round(100 * carried.usd / spent) + "% of what was spent" : "")
-      + ". Only the sessions kept here are read.");
+  const all = "\u2248" + money(carried.usd)
+    + (spent ? ", " + Math.round(100 * carried.usd / spent) + "% of what was spent" : "");
+  putSumNote(card, "All of them: " + all + ". Of the sessions wostuast keeps.",
+             "Every later reply reads a tool's result again, until a compaction or a"
+             + " /clear. Each line: its tokens \u00d7 the replies that read them, and"
+             + " \u2248 what that cost. All results together cost " + all
+             + ". Only the sessions kept here are read.");
   const list = put(card, "div", "sumlist");
   const most = carried.results[0].usd || 1;
   for (const one of carried.results) {
@@ -28949,9 +28965,10 @@ function putCostly(pane, got) {
   const turns = got.costly;
   if (!turns.length) return;
   const card = putSumCard(pane, "costliest turns");
-  put(card, "p", "sumnote", "\u2248 is each turn's share of what was spent, by the tokens"
-      + " its replies used: output weighs most, a cache read least. What was spent"
-      + " holds the subagents' too, so a session that ran many makes each share larger.");
+  putSumNote(card, "", "\u2248 is each turn's share of what was spent, by the tokens"
+             + " its replies used: output weighs most, a cache read least. What was spent"
+             + " holds the subagents' too, so a session that ran many makes each share"
+             + " larger.");
   const list = put(card, "div", "sumlist");
   const most = Math.max(...turns.map((one) => one.weight || 0)) || 1;
   for (const one of turns) {
@@ -28987,10 +29004,12 @@ function putSumCarried(pane, got) {
   // card cut it to its first words.
   const card = putSumCard(pane, "tool results kept in context");
   card.classList.add("wide");
-  put(card, "p", "sumnote", "Every later reply reads a tool's result again, until a"
-      + " compaction or a /clear. Each line: its tokens \u00d7 the replies that read them,"
-      + " and \u2248 what that cost. All results together cost "
-      + Math.round(100 * carried.share) + "% of what this session spent.");
+  const all = Math.round(100 * carried.share) + "% of what this session spent";
+  putSumNote(card, "A result costs again in every later reply, until a compaction or a"
+             + " /clear. All of them: " + all + ".",
+             "Every later reply reads a tool's result again, until a compaction or a"
+             + " /clear. Each line: its tokens \u00d7 the replies that read them, and"
+             + " \u2248 what that cost. All results together cost " + all + ".");
   const list = put(card, "div", "sumlist");
   const most = carried.results[0].weight || 1;
   for (const one of carried.results) {
@@ -29016,9 +29035,9 @@ function putSumCarried(pane, got) {
 function putSumTime(pane, got) {
   const times = got.tool_time || [];
   if (!times.length) return;
-  const card = putSumCard(pane, "time by tool");
-  put(card, "p", "sumnote", "How long its own calls ran, not the wait for your answer."
-      + " A subagent's calls are its own.");
+  const card = putSumCard(pane, "time and calls by tool");
+  putSumNote(card, "", "How long its own calls ran, not the wait for your answer."
+             + " A subagent's calls are its own.");
   const list = put(card, "div", "sumlist");
   const most = times[0].seconds || 1;
   for (const one of times) {
