@@ -64,6 +64,33 @@ can optimize my future sessions to produce less churn".
     under the other, the sections keep their order.
   - **Each part is a panel of its own** (`.sumgroup`), as the reader asked,
     so where one part ends shows.
+  - **"What it cost" shares its inner rows across the two columns**
+    (`.sumaligned`, `grid-template-rows: subgrid`, five rows: the title,
+    the question, the charts `.sumfigs`, the token bar, the list), so the
+    session's token bar stands level with the month's, as the reader
+    asked. Each piece has its row by name, so one that is missing moves
+    nothing else.
+- **The session has two charts beside the month's two** (#723,
+  `putSumContext`, `putSumEach`), as the reader asked for the empty side:
+  - **"context, reply by reply"**: how many tokens each reply read, in
+    the parts of what they were for (the start, the conversation, the
+    tool results), one on another (`Carry.points`, `context_json`). It
+    grows with every reply; a compaction or a `/clear` is where it falls.
+    A long session is thinned to `CONTEXT_POINTS`, every `every`-th reply
+    and the last. A point's numbers are on its hover.
+  - **"each turn"**: a column a turn, its share of what the session spent
+    (`each`, the last `CONTEXT_POINTS` turns), as the month has a column a
+    day. A click opens the turn beside the tab (`showInChat`).
+  - **The list "tokens, by what they were for" wears the chart's colours**
+    (`.for1` to `.for4`, writing the output's blue), as the reader asked:
+    it is the chart's key. Deep enough to win over the month's blue.
+- **The session's token bar is on the month's scale** (`putSumKinds`'s
+  `scale`, `weightOf`), as the reader asked, to see how much of the month
+  the session was: as long as its share of the month's, the title says
+  the share. The whole session's turns against the month's of this month,
+  so it is capped at the whole.
+  `test_the_context_chart_gets_every_reply_or_an_even_few`,
+  `test_the_session_s_charts_and_its_bar_on_the_month_s_scale`.
   - **Both views have the same numbered parts, each with the question it
     answers** (`putSumPart`, `.sumgroup`, `.sumask`): what it cost, where
     the money went, where the time went. The month has no third: the

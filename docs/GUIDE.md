@@ -461,7 +461,19 @@ Point at the title of a list to read how it is counted.
 **This session.** At the top, what the session spent, as Claude Code
 estimates it, its turns, and the lines its edits added and removed.
 
-In part 1, under the bar, the same tokens by what they were for. Before
+In part 1, two charts first. **Context, reply by reply** shows how many
+tokens each reply read, in the three colours of the list further down: the
+start, the conversation and the tool results. It grows with every reply, and
+falls at a compaction or a `/clear`. Point at it to read a reply's numbers.
+**Each turn** shows what each turn cost, a column a turn, beside the month's
+column a day. Click a column to read the turn in the transcript beside the
+tab.
+
+Then the bar of what the tokens cost. Side by side, it stands level with
+the month's bar, and it is as long as this session's share of the month,
+which its title says.
+
+Under the bar, the same tokens by what they were for. Before
 each reply, the model reads its whole context again, so a cache read is
 most of what a long session costs. The list splits that up:
 

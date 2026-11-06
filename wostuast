@@ -4975,6 +4975,9 @@ class Carry:
     least: int = 0
     read_weight: float = 0.0
     live_tokens: float = 0.0    # the tokens of the results in context now
+    #: Each reply's context, and how much of it was tool results, for the
+    #: chart of the context reply by reply.
+    points: list[tuple[int, int]] = field(default_factory=list)
 
     def called(self, record: dict[str, Any], blocks: list["Block"]) -> None:
         """A reply's calls, kept until their results come. Its target is
@@ -5057,6 +5060,7 @@ class Carry:
         self.read_sum += weight / context
         self.read_weight += weight
         self.least = min(self.least, context) if self.least else context
+        self.points.append((context, round(self.live_tokens)))
         self.read_n += 1
         out = used.get("output_tokens")
         self.last_context, self.last_out = context, out if isinstance(out, int) else 0
@@ -10485,6 +10489,25 @@ def carried_json(carry: Carry, cost: float | None, total: float) -> dict[str, An
                         for one, weight, replies in worst if weight]}
 
 
+#: The most points the chart of the context gets: a long session has
+#: thousands of replies, and a chart a few hundred pixels wide shows no more.
+CONTEXT_POINTS = 300
+
+
+def context_json(carry: Carry) -> dict[str, Any]:
+    """Each reply's context and its tool results, for the chart of the
+    context reply by reply, as the reader asked: why reading it again is
+    most of what a session costs. Every `every`-th reply, and the last, so
+    no more than `CONTEXT_POINTS`. `least` is the start every reply reads
+    again, as in `Carry.parts`."""
+    every = max(1, -(-len(carry.points) // CONTEXT_POINTS))
+    kept = carry.points[::every]
+    if carry.points and (len(carry.points) - 1) % every:
+        kept.append(carry.points[-1])
+    return {"points": [list(one) for one in kept], "every": every, "least": carry.least,
+            "replies": len(carry.points)}
+
+
 def tokens_json(turns: Iterable[TurnCost]) -> dict[str, dict[str, Any]]:
     """The tokens of some turns by kind, and the same by `TOKEN_WEIGHTS`,
     for the bar of what each kind cost (#688): a session's
@@ -10524,11 +10547,19 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
                     "usd": turn_share(status.cost_usd, turn.weight, total),
                     "weight": round(turn.weight, 1)}
                    for turn in worst if turn.weight],
+        # Every turn in order, the last `CONTEXT_POINTS`, for the chart of
+        # the session's cost turn by turn, beside the month's each day.
+        "each": [{"seq": turn.seq, "said": turn.said, "ts": turn.ts,
+                  "usd": turn_share(status.cost_usd, turn.weight, total),
+                  "weight": round(turn.weight, 1)}
+                 for turn in costs.turns[-CONTEXT_POINTS:]],
         # The tool results that cost the most while they stayed in context.
         "carried": carried_json(costs.carry, status.cost_usd, total),
         # What reading the context cost, by what it held, for the split by
         # what the tokens were for, as the reader asked.
         "read": costs.carry.parts(),
+        # Each reply's context, for its chart.
+        "context": context_json(costs.carry),
         # How many subagents ran, for the note over the ones the row keeps
         # (`putSumRuns`). The lists of subagents by kind and of calls by
         # tool went with the page's lists (#723): nothing read them.
@@ -16510,7 +16541,35 @@ body.switching #content::after {
   .summary > .sumpart { display: contents; }
   .summary > .sumpart > * { grid-row: var(--row); grid-column: 1; }
   .summary > .sumpart.month > * { grid-column: 2; }
+  /* "What it cost" shares its rows across the two columns, so the
+     session's token bar stands level with the month's, and the lists
+     under them too: the title, the question, the charts, the bar, the
+     list. */
+  .summary > .sumpart > .sumgroup.sumaligned {
+    grid-row: var(--row) / span 5; display: grid; grid-template-rows: subgrid;
+  }
+  .sumaligned > .sumsection { grid-row: 1; }
+  .sumaligned > .sumask { grid-row: 2; }
+  .sumaligned > .sumfigs { grid-row: 3; }
+  .sumaligned > .sumchart { grid-row: 4; }
+  .sumaligned > .sumcard { grid-row: 5; }
 }
+/* The parts of what the tokens were for, in the chart and the list
+   alike (the reader asked for one set of colours): the start, the
+   conversation, the tool results; writing is the output's colour. */
+/* Deep enough that the month's own bar colour gives way. */
+.summary .sumpart .for1, .summary .sumpart .sumbar.for1 { background: color-mix(in srgb, var(--needs) 42%, var(--panel));
+  fill: color-mix(in srgb, var(--needs) 42%, var(--panel)); }
+.summary .sumpart .for2, .summary .sumpart .sumbar.for2 { background: color-mix(in srgb, var(--needs) 72%, var(--panel));
+  fill: color-mix(in srgb, var(--needs) 72%, var(--panel)); }
+.summary .sumpart .for3, .summary .sumpart .sumbar.for3 { background: var(--needs); fill: var(--needs); }
+.summary .sumpart .for4, .summary .sumpart .sumbar.for4 { background: var(--kind-1); fill: var(--kind-1); }
+.ctxhit { fill: transparent; }
+/* A turn's column, in the session's colour; a link opens its turn. */
+.eachturn { fill: var(--needs); }
+.eachturn.link { cursor: pointer; }
+.eachturn.link:hover { fill: var(--needs-warm); }
+.ctxhit:hover { fill: color-mix(in srgb, var(--ink) 10%, transparent); }
 .sumpart > .sumview { margin: 0 0 12px; font-size: 17px; font-weight: 600; color: var(--ink-bright); }
 /* The month's bars in its charts' colour, the session's in its own
    (issue 698): side by side, a glance says which a list is of. */
@@ -28469,7 +28528,13 @@ function rowParts(section) {
     top.appendChild(section.firstChild);
   }
   section.prepend(top);
-  [...section.children].forEach((child, at) => child.style.setProperty("--row", at + 1));
+  // "What it cost" takes five rows, shared with the other column's
+  // (`.sumaligned`); every other part, one.
+  let row = 1;
+  for (const child of section.children) {
+    child.style.setProperty("--row", row);
+    row += child.classList.contains("sumaligned") ? 5 : 1;
+  }
 }
 
 // One of the parts both views share (#723), numbered, with the question it
@@ -28488,9 +28553,17 @@ function putSumPart(parent, number, title, question) {
 function putSession(part, got) {
   if (!got) { put(part, "p", "sumnote", "Reading the transcript\u2026"); return; }
   putSumHead(part, got);
-  const cost = putSumPart(part, 1, "What it cost", "How the dollars split by kind of"
-                         + " token, and by what the tokens were for.");
-  putSumKinds(cost, got);
+  const cost = putSumPart(part, 1, "What it cost", "How many tokens each reply read, how"
+                         + " the dollars split by kind of token, and what the tokens"
+                         + " were for.");
+  cost.classList.add("sumaligned");
+  const figs = put(cost, "div", "sumfigs");
+  putSumContext(figs, got.context);
+  putSumEach(figs, got.each || []);
+  // On the month's scale, as the reader asked: how much of the month this
+  // session was. The whole session's turns, the month's of this month.
+  const month = state.spend && state.spend.kinds ? weightOf(state.spend.kinds) : 0;
+  putSumKinds(cost, got, month ? Math.min(1, weightOf(got) / month) : null);
   putSumFor(cost, got);
   const money = put(putSumPart(part, 2, "Where the money went", "The turns and the tool"
                                + " results that cost the most. \u2248 is a share of what"
@@ -28580,10 +28653,12 @@ function putSpend(pane, spend, allowance) {
   if (!allowance) note.title = ALLOWANCE_WHERE;
   const cost = putSumPart(pane, 1, "What it cost", "What all sessions spent each day,"
                           + " the way to the month's end, and the split by kind of token.");
-  put(cost, "h3", "sumtitle", "spent so far");
-  const run = putSpendRun(cost, spend, allowance, pace);
-  put(cost, "h3", "sumtitle", "each day");
-  const charts = { run, each: putSpendDays(cost, spend) };
+  cost.classList.add("sumaligned");
+  const figs = put(cost, "div", "sumfigs");
+  put(figs, "h3", "sumtitle", "spent so far");
+  const run = putSpendRun(figs, spend, allowance, pace);
+  put(figs, "h3", "sumtitle", "each day");
+  const charts = { run, each: putSpendDays(figs, spend) };
   // The session's bar of what its tokens cost, for the whole month (#722):
   // the turns that began this month, of the sessions the daemon keeps.
   putSumKinds(cost, spend.kinds || {});
@@ -28932,6 +29007,8 @@ function putSpendHit(chart, day, words, spend) {
     + String(day).padStart(2, "0")) + ": " + words;
 }
 
+// --- the Statistics tab's pieces: the head, the clock, the token bars and lists, a session's charts, its costliest turns and its calls [topics/summary]
+
 // The few numbers that say the most, each over what it is, then where the
 // time and the tokens went, as charts (#688): three times and four counts
 // of tokens side by side were hard to read.
@@ -28978,18 +29055,28 @@ function putSumClock(parent, got) {
 const TOKEN_KINDS = [["output_tokens", "output"], ["cache_creation_input_tokens", "cache written"],
                      ["input_tokens", "input"], ["cache_read_input_tokens", "cache read"]];
 
+// What some tokens cost, weighted as Anthropic prices them, all kinds.
+function weightOf(got) {
+  const weighted = got.weighted || {};
+  return TOKEN_KINDS.reduce((sum, [field]) => sum + (weighted[field] || 0), 0);
+}
+
 // What each kind of token cost, as one bar split into its parts (#688):
 // the tokens weighted as Anthropic prices them, so a million cache reads
 // show as the tenth they cost. Each block says its share where it fits;
 // the key names the kinds and their counts.
-function putSumKinds(parent, got) {
+function putSumKinds(parent, got, scale = null) {
   const weighted = got.weighted || {};
-  const total = TOKEN_KINDS.reduce((sum, [field]) => sum + (weighted[field] || 0), 0);
+  const total = weightOf(got);
   if (!total) return;
   const t = got.tokens || {};
   const box = put(parent, "div", "sumchart");
-  put(box, "h3", "sumtitle", "tokens, by what they cost");
+  // A session's bar on the month's scale (#723): as long as its share of
+  // the month's, which is the whole width.
+  const share = scale === null ? "" : "  \u00b7  " + Math.round(100 * scale) + "% of the month";
+  put(box, "h3", "sumtitle", "tokens, by what they cost" + share);
   const bar = put(box, "div", "kindbar");
+  if (scale !== null) bar.style.width = Math.max(1, 100 * scale) + "%";
   bar.setAttribute("role", "img");
   const key = put(box, "div", "sumkey");
   const said = [];
@@ -29040,13 +29127,110 @@ function putSumFor(parent, got) {
   const card = putSumCard(parent, "tokens, by what they were for");
   const list = put(card, "div", "sumlist");
   const most = Math.max(...parts.map(([weight]) => weight || 0));
-  for (const [weight, said, title] of parts) {
+  parts.forEach(([weight, said, title], at) => {
     const line = put(list, "div", "sumline");
     line.title = title;
     put(line, "span", "sumnum", Math.round(100 * (weight || 0) / whole) + "%");
-    putSumBar(line, (weight || 0) / most);
+    // In the chart's colours, as the reader asked: the list is its key.
+    putSumBar(line, (weight || 0) / most).classList.add("for" + (at + 1));
     put(line, "span", "sumsaid", said);
+  });
+}
+
+// What each turn cost, in order (#723): a column a turn, as the month's
+// chart has a column a day beside it, as the reader asked to fill the
+// session's side. A column is the turn's share of what the session spent,
+// or of its weight when the status line says no cost. A click opens the
+// turn in the transcript beside the tab, as a costliest turn does.
+function putSumEach(parent, turns) {
+  const shown = turns.filter((one) => one.weight);
+  if (shown.length < 2) return;
+  const dollars = shown.every((one) => one.usd !== null && one.usd !== undefined);
+  const value = (one) => (dollars ? one.usd : one.weight);
+  const most = Math.max(...shown.map(value)) || 1;
+  const all = shown.reduce((sum, one) => sum + one.weight, 0) || 1;
+  put(parent, "h3", "sumtitle", "each turn");
+  const width = 600, height = 120, left = 40, bottom = 22, top = 8;
+  const slot = (width - left) / shown.length;
+  const y = (v) => top + (height - top - bottom) * (1 - v / most);
+  const svg = putSvg(parent, "svg", { class: "spendsvg", viewBox: `0 0 ${width} ${height}`,
+                                      role: "img" });
+  svg.setAttribute("aria-label", "what each turn cost, of " + shown.length + " turns");
+  for (const v of [0, most / 2, most]) {
+    putSvg(svg, "line", { class: "spendgrid", x1: left, x2: width, y1: y(v), y2: y(v) });
+    putSvg(svg, "text", { class: "spendtick", x: left - 6, y: y(v) + 4, "text-anchor": "end" })
+      .textContent = dollars ? money(v) : Math.round(100 * v / all) + "%";
   }
+  shown.forEach((one, at) => {
+    const x = left + at * slot;
+    const bar = putSvg(svg, "rect", { class: "eachturn" + (one.seq < 0 ? "" : " link"),
+                                      x: x + slot * 0.15, width: Math.max(1, slot * 0.7),
+                                      y: y(value(one)), height: y(0) - y(value(one)) });
+    putSvg(bar, "title", {}).textContent = (dollars ? "\u2248" + money(one.usd) : "")
+      + (dollars ? " \u00b7 " : "") + Math.round(100 * one.weight / all) + "% \u00b7 "
+      + one.said + (one.seq < 0 ? "" : "\nshow this turn in the transcript");
+    if (one.seq < 0) return;
+    bar.addEventListener("click", () => {
+      state.turns.goTo = one.seq;
+      state.turns.goToTs = one.ts;
+      showInChat();
+    });
+  });
+  for (const at of [0, shown.length - 1]) {
+    putSvg(svg, "text", { class: "spendtick", x: left + (at + 0.5) * slot, y: height - 6,
+                          "text-anchor": at ? "end" : "start" }).textContent = "turn " + (at + 1);
+  }
+}
+
+// How many tokens each reply read, in the parts of what they were for
+// (#723), as the reader asked for a chart of the session: the start every
+// reply reads again, the conversation, the tool results, one on another.
+// It grows with every reply; a compaction or a /clear is where it falls.
+// A long session's replies are thinned by the daemon (`context_json`).
+function putSumContext(parent, context) {
+  const points = (context && context.points) || [];
+  if (points.length < 2) return;
+  put(parent, "h3", "sumtitle", "context, reply by reply");
+  const width = 600, height = 140, left = 40, bottom = 22, top = 8;
+  const most = Math.max(...points.map(([all]) => all)) || 1;
+  const x = (at) => left + (width - left) * at / (points.length - 1);
+  const y = (tokens) => top + (height - top - bottom) * (1 - tokens / most);
+  const layers = points.map(([all, results]) => {
+    const start = Math.min(context.least, all);
+    const kept = Math.min(results, all - start);
+    return [start, all - kept, all];
+  });
+  const svg = putSvg(parent, "svg", { class: "spendsvg", viewBox: `0 0 ${width} ${height}`,
+                                      role: "img" });
+  svg.setAttribute("aria-label", "tokens in context, reply by reply, of "
+                   + context.replies + " replies");
+  for (const tokens of [0, most / 2, most]) {
+    putSvg(svg, "line", { class: "spendgrid", x1: left, x2: width, y1: y(tokens), y2: y(tokens) });
+    putSvg(svg, "text", { class: "spendtick", x: left - 6, y: y(tokens) + 4,
+                          "text-anchor": "end" }).textContent = roughly(Math.round(tokens));
+  }
+  [0, 1, 2].forEach((layer) => {
+    let d = "M" + x(0) + "," + y(layers[0][layer]);
+    for (let at = 1; at < points.length; at += 1) d += "L" + x(at) + "," + y(layers[at][layer]);
+    for (let at = points.length - 1; at >= 0; at -= 1) {
+      d += "L" + x(at) + "," + y(layer ? layers[at][layer - 1] : 0);
+    }
+    putSvg(svg, "path", { class: "for" + (layer + 1), d: d + "Z" });
+  });
+  const reply = (at) => Math.min(context.replies, at * context.every + 1);
+  for (const at of [0, points.length - 1]) {
+    putSvg(svg, "text", { class: "spendtick", x: x(at), y: height - 6,
+                          "text-anchor": at ? "end" : "start" }).textContent = "reply " + reply(at);
+  }
+  // A point's numbers on a hover, a strip a point.
+  const step = (width - left) / (points.length - 1);
+  layers.forEach(([start, talk, all], at) => {
+    const hit = putSvg(svg, "rect", { class: "ctxhit", x: x(at) - step / 2, y: top,
+                                      width: step, height: height - top - bottom });
+    putSvg(hit, "title", {}).textContent = "reply " + reply(at) + ": " + roughly(all)
+      + " tokens: the start " + roughly(start) + ", the conversation "
+      + roughly(talk - start) + ", tool results " + roughly(all - talk);
+  });
 }
 
 // The turns that used the most, each a link to it in the transcript.
