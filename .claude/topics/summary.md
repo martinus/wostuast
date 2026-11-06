@@ -92,6 +92,21 @@ can optimize my future sessions to produce less churn".
   validator passed for colour blindness on both surfaces; each block says
   its share where it has room, and a key names the kinds.
   `test_the_session_s_time_and_tokens_are_charts`.
+- **The session's tokens are split by what they were for, under the
+  token bar** (`Carry.parts`, `read`, `putSumFor`), as the reader asked:
+  a cache read was 72 % of what a session spent and its tool results
+  28 %, because every reply reads its whole context again and the results
+  are one part of it. Four lines: the start every reply reads again, the
+  conversation, the tool results, writing the replies. **The start is an
+  estimate**: the smallest context any reply read (`least`), at each
+  reply's own weights (`read_sum`); it holds a little of the first
+  prompt, and after a summary the summary too. The results are what
+  `Carry` counts for them; the conversation is the rest of what reading
+  the context cost (`read_weight`). **Shares of the same whole as the
+  bar and the results' own share**, so the numbers agree across the tab.
+  The month has no split.
+  `test_what_the_context_cost_splits_into_the_start_the_results_and_the_rest`,
+  `test_the_session_s_time_and_tokens_are_charts`.
 - **Each subagent the daemon keeps is a line of its own** (#687,
   `putSumRuns`, `.sumcard.wide`, "subagents"): a line a kind said only
   how many ran, and it went (#723). The newest first: how long it ran ("running" while it

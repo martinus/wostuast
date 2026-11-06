@@ -459,6 +459,21 @@ Point at the title of a list to read how it is counted.
 **This session.** At the top, what the session spent, as Claude Code
 estimates it, its turns, and the lines its edits added and removed.
 
+In part 1, under the bar, the same tokens by what they were for. Before
+each reply, the model reads its whole context again, so a cache read is
+most of what a long session costs. The list splits that up:
+
+- **The start every reply reads again**: Claude Code's system prompt, the
+  tools and `CLAUDE.md`. This is an estimate: the smallest context any
+  reply read. Point at it to see how many tokens that was.
+- **The conversation**: your prompts, the replies, and what each call sent,
+  such as the text of an Edit or a Write.
+- **Tool results kept in context**: the same share as the list in part 2.
+- **Writing the replies**: the output.
+
+A large start is cut by a shorter `CLAUDE.md` and fewer MCP servers. A
+large conversation or large results are cut by `/clear` between tasks.
+
 In part 2, the costliest turns. A turn's share of what was spent is marked
 "≈": the status line says only the whole, so each turn gets its share by
 the tokens its replies used, output weighing most and a cache read least.

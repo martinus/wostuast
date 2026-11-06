@@ -337,6 +337,35 @@ def test_the_month_s_tokens_are_its_turns_by_kind_and_by_what_they_cost(ws):
     assert session["weighted"]["output_tokens"] == got["weighted"]["output_tokens"] * 20 / 120
 
 
+def test_what_the_context_cost_splits_into_the_start_the_results_and_the_rest(ws, tmp_path):
+    """The reader asked why a cache read was 72 % of what a session spent
+    and its tool results 28 %: every reply reads its whole context again,
+    and the results are one part of it. The start every reply reads again
+    is the smallest context any reply read, at each reply's own weights;
+    the results cost what `Carry` counts for them; the conversation is the
+    rest of what reading the context cost."""
+    path = tmp_path / "s1.jsonl"
+    path.write_text(records(
+        record("you", "look around"),
+        # 1000 tokens of context, read in full: a weight of 1 a token.
+        reply(record("tool", "cat big", tool_id="t1"), "m1", input_tokens=1000,
+              output_tokens=100),
+        record("result", "x" * 300, tool_id="t1"),
+        # 1700 from the cache, a tenth each: the result is the 600 it grew
+        # past the 1000 before and that reply's 100 out.
+        reply(record("claude", "read it"), "m2", cache_read_input_tokens=1700)))
+    got = ws.CostReader(path).read().carry.parts()
+    # The start: 1000 tokens at 1, then at a tenth. The result: 600 at a
+    # tenth. All read: 1000 + 170; the conversation is what is left.
+    assert got == {"start": 1100.0, "results": 60.0, "conversation": 10.0,
+                   "start_tokens": 1000}
+    reader = ws.Transcript(str(path))
+    reader.read_new()
+    store = ws.Store()
+    store.fold([event("SessionStart", ts=1000.0, transcript_path=str(path))])
+    assert ws.summary_json(store.sessions["s1"], reader.costs)["read"] == got
+
+
 def test_a_tool_result_costs_each_later_reply_until_the_context_goes(ws, tmp_path):
     """A result's tokens are its share, by its characters, of how much the
     next reply's context grew past the reply before and that reply's own
