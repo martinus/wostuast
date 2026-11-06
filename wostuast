@@ -4963,6 +4963,10 @@ class Carry:
     read_n: int = 0
     last_context: int = 0
     last_out: int = 0
+    #: The smallest context any reply read, and what every reply's context
+    #: cost, weighted: for the split by what the tokens were for.
+    least: int = 0
+    read_weight: float = 0.0
 
     def called(self, record: dict[str, Any], blocks: list["Block"]) -> None:
         """A reply's calls, kept until their results come. Its target is
@@ -5037,11 +5041,28 @@ class Carry:
                     self.live.append(one)
                     self.results.append(one)
         self.waiting, self.other = [], 0
-        self.read_sum += sum(TOKEN_WEIGHTS[key] * count for key in CONTEXT_KEYS
-                             if isinstance(count := used.get(key), int) and count > 0) / context
+        weight = sum(TOKEN_WEIGHTS[key] * count for key in CONTEXT_KEYS
+                     if isinstance(count := used.get(key), int) and count > 0)
+        self.read_sum += weight / context
+        self.read_weight += weight
+        self.least = min(self.least, context) if self.least else context
         self.read_n += 1
         out = used.get("output_tokens")
         self.last_context, self.last_out = context, out if isinstance(out, int) else 0
+
+    def parts(self) -> dict[str, float]:
+        """What reading the context cost, by what it held (weighted tokens):
+        the start every reply reads again, the tool results, and the
+        conversation, which is the rest. The start is an estimate: the
+        smallest context any reply read, at each reply's own weights. It
+        holds the system prompt, the tools and `CLAUDE.md`, and a little
+        of the first prompt; a session resumed from a summary holds the
+        summary too."""
+        start = self.least * self.read_sum
+        results = sum(self.weighed(one)[0] for one in self.results)
+        return {"start": round(start, 1), "results": round(results, 1),
+                "conversation": round(max(0.0, self.read_weight - start - results), 1),
+                "start_tokens": self.least}
 
     def forget(self) -> None:
         """The context is gone: what it held costs nothing more."""
@@ -10488,6 +10509,9 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
                    for turn in worst if turn.weight],
         # The tool results that cost the most while they stayed in context.
         "carried": carried_json(costs.carry, status.cost_usd, total),
+        # What reading the context cost, by what it held, for the split by
+        # what the tokens were for, as the reader asked.
+        "read": costs.carry.parts(),
         # How many subagents ran, for the note over the ones the row keeps
         # (`putSumRuns`). The lists of subagents by kind and of calls by
         # tool went with the page's lists (#723): nothing read them.
@@ -28426,8 +28450,10 @@ function putSumPart(parent, number, title, question) {
 function putSession(part, got) {
   if (!got) { put(part, "p", "sumnote", "Reading the transcript\u2026"); return; }
   putSumHead(part, got);
-  putSumKinds(putSumPart(part, 1, "What it cost", "How the dollars split by kind of"
-                         + " token: output costs most, a cache read least."), got);
+  const cost = putSumPart(part, 1, "What it cost", "How the dollars split by kind of"
+                         + " token, and by what the tokens were for.");
+  putSumKinds(cost, got);
+  putSumFor(cost, got);
   const money = put(putSumPart(part, 2, "Where the money went", "The turns and the tool"
                                + " results that cost the most. \u2248 is a share of what"
                                + " the session spent."), "div", "sumcards");
@@ -28944,6 +28970,41 @@ function putSumKinds(parent, got) {
     put(item, "span", "sumkeyvalue", roughly(t[field] || 0));
   });
   bar.setAttribute("aria-label", "what the tokens cost, by kind: " + said.join("; "));
+}
+
+// The session's tokens by what they were for, as the reader asked: why a
+// cache read was 72 % of what a session spent while its tool results were
+// 28 %. Every reply reads its whole context again, and the results are
+// one part of it. So: the start every reply reads again (an estimate, the
+// smallest context any reply read), the conversation, the tool results,
+// and writing the replies. Shares of the same whole as the bar above and
+// the results' own share, so the numbers add up across the tab.
+function putSumFor(parent, got) {
+  const read = got.read;
+  const writing = (got.weighted || {}).output_tokens || 0;
+  if (!read) return;
+  const parts = [
+    [read.start, "the start every reply reads again: system prompt, tools, CLAUDE.md",
+     "about: the smallest context any reply read, " + roughly(read.start_tokens)
+     + " tokens, read again by every reply"],
+    [read.conversation, "the conversation: prompts, replies, what the calls sent",
+     "the rest of what the replies read: what was said, and the input of each call, such"
+     + " as the text an Edit or a Write sends"],
+    [read.results, "tool results kept in context",
+     "every later reply reads a result again, until a compaction or a /clear"],
+    [writing, "writing the replies", "the output tokens"]];
+  const whole = parts.reduce((sum, [weight]) => sum + (weight || 0), 0);
+  if (!whole) return;
+  const card = putSumCard(parent, "tokens, by what they were for");
+  const list = put(card, "div", "sumlist");
+  const most = Math.max(...parts.map(([weight]) => weight || 0));
+  for (const [weight, said, title] of parts) {
+    const line = put(list, "div", "sumline");
+    line.title = title;
+    put(line, "span", "sumnum", Math.round(100 * (weight || 0) / whole) + "%");
+    putSumBar(line, (weight || 0) / most);
+    put(line, "span", "sumsaid", said);
+  }
 }
 
 // The turns that used the most, each a link to it in the transcript.

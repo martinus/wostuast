@@ -1500,6 +1500,19 @@ def test_the_session_s_time_and_tokens_are_charts(ws, page_at):
           [one.className, Number(one.style.flexGrow).toFixed(2), one.textContent])""")
         assert parts == [["kindpart kind1", "0.50", "50%"], ["kindpart kind3", "0.10", "10%"],
                          ["kindpart kind4", "0.40", "40%"]], parts
+        # By what the tokens were for, as the reader asked: one reply, so
+        # its whole context is the start every reply reads again, 1000 + a
+        # tenth of 40000; writing is the output's 5000. The same whole as
+        # the bar, so writing is the bar's output share.
+        card = page.locator(".sumcard", has_text="by what they were for")
+        lines = [[one.locator(".sumnum").inner_text(), one.locator(".sumsaid").inner_text()]
+                 for one in card.locator(".sumline").all()]
+        assert lines == [
+            ["50%", "the start every reply reads again: system prompt, tools, CLAUDE.md"],
+            ["0%", "the conversation: prompts, replies, what the calls sent"],
+            ["0%", "tool results kept in context"],
+            ["50%", "writing the replies"]], lines
+        assert "41k tokens" in card.locator(".sumline").first.get_attribute("title")
         key = page.locator(".sumchart", has_text="by what they cost").locator(".sumkey")
         assert key.inner_text().split() == ["output", "1k", "input", "1k", "cache", "read",
                                             "40k"], key.inner_text()
