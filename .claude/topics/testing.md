@@ -70,7 +70,11 @@ scratchpad.
   `test_a_break_that_hangs_a_test_is_put_back_and_said`,
   `test_a_kill_puts_the_file_back`.
 - **`perturb.py` proves red, never green: run a test green again after any
-  edit to it.** A broken test is red for every break (#524).
+  edit to it.** A broken test is red for every break (#524). **The tool
+  now runs each selection once on the code as it is, and stops at a red
+  one** (`red_before`, exit status 2): a test step that never passed was
+  taken for proven breaks (#728).
+  `test_a_test_red_before_any_break_stops_the_run`.
 - **It deletes the file's bytecode after every write**
   (`forget_bytecode`): Python reuses a `.pyc` while mtime in whole seconds
   and size match, so `SEND_MAX` then `POST_MAX` broken in one second ran

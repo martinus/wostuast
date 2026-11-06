@@ -31,6 +31,12 @@ Before this, a FIFO named like a skill hung the run, the run was stopped
 with `kill`, and the break stayed in `wostuast`: the file was put back
 only on Ctrl-C.
 
+**The tests run once on the code as it is, before any break**, and the run
+stops if one of them is red there (exit status 2): a red under a break then
+proves nothing. A test step that never passed was taken for five proven
+breaks this way (#728). Each selection runs once, however many breaks
+name it.
+
 `WOSTUAST_WAIT` is 5000 unless it is set already, so a break that makes the
 page wait for something that never comes fails in five seconds, not thirty.
 """
@@ -79,6 +85,43 @@ def forget_bytecode(path: Path) -> None:
     Path(importlib.util.cache_from_source(str(path))).unlink(missing_ok=True)
 
 
+def run_tests(selection: list[str], env: dict, limit: float) -> str:
+    """Run pytest on `selection` and hand back what it printed. Raises
+    `TimeoutExpired` past `limit` seconds. A session of its own, so a
+    timeout or a kill takes the browsers and daemons the tests started with
+    it, not pytest alone."""
+    tests = subprocess.Popen(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *selection],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        env=env, start_new_session=True)
+    try:
+        printed, _ = tests.communicate(timeout=limit)
+    except BaseException:
+        os.killpg(tests.pid, signal.SIGKILL)
+        tests.wait()
+        raise
+    return printed
+
+
+def red_before(breaks: list[dict], env: dict) -> str:
+    """The first selection that is not green on the code as it is, with
+    why, or "" when all are: a red under a break proves nothing then (#728,
+    and #524 before it: a broken test is red for every break)."""
+    seen: set[tuple[str, ...]] = set()
+    for entry in breaks:
+        selection = tuple(entry["tests"])
+        if selection in seen:
+            continue
+        seen.add(selection)
+        try:
+            failed, _ = counts(run_tests(list(selection), env, entry.get("timeout", 300)))
+        except subprocess.TimeoutExpired:
+            return f"{' '.join(selection)}: hung before any break"
+        if failed:
+            return f"{' '.join(selection)}: {failed} failed before any break"
+    return ""
+
+
 def one(entry: dict, env: dict) -> tuple[bool, str]:
     """Apply one break, run its tests, put the file back. (proven, line)."""
     path = Path(entry.get("file", "wostuast"))
@@ -91,19 +134,7 @@ def one(entry: dict, env: dict) -> tuple[bool, str]:
     try:
         path.write_bytes(text.replace(entry["old"], entry["new"]).encode("utf-8"))
         forget_bytecode(path)
-        # A session of its own, so a timeout or a kill takes the browsers
-        # and daemons the tests started with it, not pytest alone.
-        tests = subprocess.Popen(
-            [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
-             *entry["tests"]],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-            env=env, start_new_session=True)
-        try:
-            printed, _ = tests.communicate(timeout=limit)
-        except BaseException:
-            os.killpg(tests.pid, signal.SIGKILL)
-            tests.wait()
-            raise
+        printed = run_tests(entry["tests"], env, limit)
     except subprocess.TimeoutExpired:
         return False, f"HUNG   past {limit} s -- give the test a time limit"
     finally:
@@ -127,6 +158,10 @@ def main(argv: list[str]) -> int:
     # A `kill` puts the file back as Ctrl-C does: it raises in here, and
     # `one`'s `finally` runs.
     signal.signal(signal.SIGTERM, signal.default_int_handler)
+    red = red_before(breaks, env)
+    if red:
+        print(f"RED BEFORE ANY BREAK  {red}: make it green first", flush=True)
+        return 2
     proven = 0
     for index, entry in enumerate(breaks):
         ok, line = one(entry, env)

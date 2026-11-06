@@ -74,6 +74,21 @@ def test_no_bytecode_of_a_break_is_left_behind(tmp_path):
     assert not cached.exists()
 
 
+def test_a_test_red_before_any_break_stops_the_run(tmp_path):
+    """A red under a break proves nothing when the test was red already: a
+    test step that never passed was taken for proven breaks (#728). The
+    tests run once on the code as it is, and a red one stops the run, with
+    no break applied."""
+    (tmp_path / "test_red.py").write_text("def test_red():\n    assert False\n")
+    done = run(tmp_path, [{"name": "wrong answer", "file": "mod.py",
+                           "old": "return 1", "new": "return 2",
+                           "tests": ["test_red.py"]}])
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "RED BEFORE ANY BREAK  test_red.py: 1 failed" in done.stdout
+    assert "breaks proven" not in done.stdout
+    assert (tmp_path / "mod.py").read_text() == MODULE
+
+
 def test_only_the_summary_line_is_counted():
     printed = "3 passed in the log of a test\n1 failed, 4 passed in 0.52s\n"
     assert perturb.counts(printed) == (1, 4)
@@ -81,7 +96,10 @@ def test_only_the_summary_line_is_counted():
     assert perturb.counts("no tests ran in 0.01s") == (0, 0)
 
 
-HANG = "def test_hangs():\n    import time\n    time.sleep(3600)\n"
+# Hangs under the break alone: the run first runs the tests on the code as
+# it is, and a test that hangs there stops the run before any break.
+HANG = ("from mod import f\n\n\ndef test_hangs():\n    import time\n"
+        "    if f() == 2:\n        time.sleep(3600)\n")
 
 
 def test_a_break_that_hangs_a_test_is_put_back_and_said(tmp_path):
