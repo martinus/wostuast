@@ -10597,7 +10597,17 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
                           session.tool_time.items(), key=lambda one: (-one[1][1], one[0]))],
         "slow": [{"tool": one.tool, "what": one.what, "seconds": round(one.seconds, 3),
                   "began": round(one.began, 3)} for one in session.slow_calls],
+        # Its transcript, for the prompt the tab makes: an agent reads the
+        # turns the numbers name. Only one `safe_transcript` passes.
+        "transcript": transcript_of(session),
     }
+
+
+def transcript_of(session: Session) -> str:
+    """A session's transcript as the prompt names it, or "": the path
+    arrives in an event, so only one `safe_transcript` passes is named."""
+    path = safe_transcript(session.transcript_path)
+    return str(path) if path else ""
 
 
 def spend_by_day(totals: Iterable[dict[str, float]]) -> dict[str, float]:
@@ -11191,7 +11201,11 @@ class Daemon:
                     # Its tokens by what they cost (#722).
                     "kinds": month_tokens_json(now, costs),
                     # Where their time went, from the fold.
-                    "time": month_time_json(now, list(self.store.sessions.values()))}
+                    "time": month_time_json(now, list(self.store.sessions.values())),
+                    # The transcripts of the sessions it keeps, for the prompt.
+                    "transcripts": {session_id: path for session_id in costs
+                                    if (session := self.store.sessions.get(session_id))
+                                    and (path := transcript_of(session))}}
 
     def spend_statuses(self) -> dict[str, Status]:
         """Each status file, by its session's id, read again only when the
@@ -29688,7 +29702,8 @@ function promptName(one) {
 function promptAsk(month) {
   return ["## What I want from you", "",
     "1. Read the project's CLAUDE.md, its .claude folder (rules, skills, commands, settings)"
-    + " and the files and commands named above.",
+    + " and the files and commands named above. To see how the start splits into the system"
+    + " prompt, the tools and CLAUDE.md, ask me to run /context and paste what it shows.",
     "2. Find what made " + (month ? "these sessions" : "this session") + " cost what "
     + (month ? "they" : "it") + " did. Use the numbers: what every reply reads again (the"
     + " start), the tool results that stayed in context, the costliest turns, the slowest calls."
@@ -29729,7 +29744,12 @@ function sessionPrompt(got) {
                + " read " + roughly(got.context.least) + " tokens, the largest "
                + roughly(Math.max(...points.map(([all]) => all))) + ".");
   }
-  lines.push("", "## Where the money went", "", "The costliest turns:", "");
+  if (got.transcript) {
+    lines.push("- Its transcript, one JSON record a line: " + JSON.stringify(got.transcript)
+               + ". It is large: read only the turns you need, with grep or jq.");
+  }
+  lines.push("", "## Where the money went");
+  if ((got.costly || []).length) lines.push("", "The costliest turns:", "");
   (got.costly || []).forEach((one, at) => lines.push((at + 1) + ". "
     + (one.usd === null ? "" : "\u2248" + cents(one.usd) + ": ") + JSON.stringify(one.said)
     + ", " + counted(one.replies || 0, "reply", "replies") + "."));
@@ -29779,12 +29799,19 @@ function monthPrompt(spend, allowance) {
     "- Spent: " + cents(spent) + " in " + counted(spend.days.length, "day", "days") + "; at this"
     + " pace " + cents(spent / spend.days.length * spend.length) + " for the month"
     + (allowance ? ", against an allowance of " + cents(allowance) : "") + ".",
-    ...promptTokens(spend.kinds || {}), "", "## Where the money went", "", "The costliest sessions:", ""];
+    ...promptTokens(spend.kinds || {}), "", "## Where the money went"];
+  if ((spend.sessions || []).length) lines.push("", "The costliest sessions:", "");
   for (const one of spend.sessions || []) {
     const s = sessionById(one.id);
-    lines.push("- " + cents(one.usd) + ": " + promptName(one) + (s && s.cwd ? ", in " + s.cwd : "") + ".");
+    const path = (spend.transcripts || {})[one.id];
+    lines.push("- " + cents(one.usd) + ": " + promptName(one) + (s && s.cwd ? ", in " + s.cwd : "")
+               + (path ? ", its transcript " + JSON.stringify(path) : "") + ".");
   }
-  lines.push("", "The costliest turns:", "");
+  if (Object.keys(spend.transcripts || {}).length) {
+    lines.push("", "A transcript holds one JSON record a line, and is large: read only the turns"
+               + " you need, with grep or jq.");
+  }
+  if ((spend.turns || []).length) lines.push("", "The costliest turns:", "");
   (spend.turns || []).forEach((one, at) => lines.push((at + 1) + ". \u2248" + cents(one.usd) + ": "
     + promptName(one) + ": " + JSON.stringify(one.said) + "."));
   const carried = spend.carried;

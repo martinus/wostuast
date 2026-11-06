@@ -1157,6 +1157,74 @@ def test_the_month_says_where_the_time_went(ws, page_at):
           .some((one) => one.textContent.includes('make test'))""")
 
 
+def test_each_view_makes_a_prompt_to_copy_or_to_put_in_the_send_box(ws, page_at):
+    """The reader asked for a prompt from the tab's numbers, for an agent to
+    find what cuts the cost without losing much quality: each view's title
+    line copies its own, or puts it in the chosen session's send box, after
+    the reader's own words, for the reader to send. The prompt holds the
+    parts of its view, the transcripts to read, and what the agent is asked
+    to do. A view with no numbers has no buttons."""
+    daemon, path = page_at
+    # Today, so the month holds the turn.
+    now = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 60))
+    used = dict(input_tokens=40, output_tokens=9000, cache_read_input_tokens=50000)
+    made = conftest.record("tool", "make test", tool_id="g1", ts=now)
+    made["message"].update(id="m1", usage=used)
+    # A later reply reads the result again, so it is kept in context.
+    later = conftest.record("claude", "Done.", ts=now)
+    later["message"].update(id="m2", usage=dict(output_tokens=10, cache_read_input_tokens=61000))
+    write_records(daemon, conftest.record("you", "Run the tests.", ts=now), made,
+                  conftest.record("result", "ok\n" * 400, tool_id="g1", ts=now), later)
+    moment = time.time()
+    for name, at, extra in (
+            ("UserPromptSubmit", moment - 120, dict(prompt="Run the tests.")),
+            ("SubagentStart", moment - 100, dict(agent_id="a1", agent_type="Explore")),
+            ("SubagentStop", moment - 90, dict(agent_id="a1", agent_type="Explore")),
+            ("PostToolUse", moment - 60, dict(tool_name="Bash", tool_use_id="g1",
+                                              tool_input={"command": "make test"},
+                                              duration_ms=30_000)),
+            ("Stop", moment - 30, {})):
+        ws.append_event(conftest.event(name, ts=at, pane="%7", pid=1, **extra))
+    daemon.store.refresh()
+    transcript = str(daemon.transcript("s1").tail.path)
+    mine, month = ".sumpart:not(.month)", ".sumpart.month"
+    with opened(path) as page:
+        page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+        wait_for_map(page)
+        page.keyboard.press("4")
+        page.wait_for_selector(f"{mine} .sumcard >> text=make test")
+        page.wait_for_selector(f"{month} .sumnote >> text=Nothing kept yet")
+        assert page.locator(f"{month} .sumacts").count() == 0, "no numbers, no prompt"
+        ws.write_status("s1", ws.Status(cost_usd=2.0, days={time.strftime("%Y-%m-%d"): 2.0}))
+        page.evaluate("loadSpend()")
+        page.wait_for_selector(f"{month} .sumacts .promptcopy")
+        page.locator(f"{mine} .promptcopy").click()
+        page.wait_for_selector(f"{mine} .promptcopy.done")
+        got = page.evaluate("navigator.clipboard.readText()")
+        for part in ("## What it cost", "## Where the money went", "## Where the time went",
+                     '"Run the tests."', 'Bash "make test" 30s', "- Bash: 1 call, 30s.",
+                     json.dumps(transcript), "/context", "Change nothing yet",
+                     "Tool results kept in context", "make test, ", "- Subagent Explore:"):
+            assert part in got, (part, got)
+        name = page.evaluate("rowName(state.sessions.find((s) => s.id === 's1'))")
+        page.locator(f"{month} .promptcopy").click()
+        page.wait_for_function("""() => navigator.clipboard.readText()
+          .then((text) => text.includes('all my Claude Code sessions this month'))""")
+        got = page.evaluate("navigator.clipboard.readText()")
+        for part in (json.dumps(name) + ": " + json.dumps("Run the tests."),
+                     "its transcript " + json.dumps(transcript), "habits that repeat",
+                     "- Bash: ", "The costliest of them:", "- Busy: 1min in all"):
+            assert part in got, (part, got)
+        # Into the send box, after the reader's own words, with the
+        # transcript opened beside the tab; nothing is sent.
+        page.evaluate("$('say').value = 'my own words'")
+        page.locator(f"{mine} .promptsay").click()
+        page.wait_for_function("document.body.classList.contains('sidechat')")
+        said = page.evaluate("$('say').value")
+        assert said.startswith("my own words\n\n# Cut what my Claude Code sessions cost"), said
+        assert page.evaluate("document.activeElement.id") == "say"
+
+
 def show_month(page):
     """All sessions this month, beside the session or under it."""
     page.wait_for_selector(".sumpart.month")
