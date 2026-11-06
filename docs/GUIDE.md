@@ -460,6 +460,15 @@ each other in their own column. Each part answers one question:
 Point at the title of a list to read how it is counted. Every amount shows
 its cents, so the amounts line up.
 
+Each view has two buttons beside its title. **copy prompt** puts its
+numbers on the clipboard as a prompt for an agent, to paste where you
+want, for example in a fresh session. **put in send box** puts the same
+prompt in the chosen session's send box, after any words you typed, and
+opens the transcript beside the tab. Nothing is sent until you press
+Enter. The prompt names the transcripts to read, and asks the agent to
+find what cuts the cost without losing much quality, to rank its ideas by
+what they save, and to change nothing before you choose.
+
 **This session.** At the top, what the session spent, as Claude Code
 estimates it, its turns, and the lines its edits added and removed.
 

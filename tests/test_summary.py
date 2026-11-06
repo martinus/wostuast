@@ -225,6 +225,19 @@ def test_the_month_s_time_counts_this_month_s_days_of_every_session(ws):
                                                                 ("a", "make test")]
 
 
+def test_a_session_names_its_transcript_only_where_it_may_be_opened(ws, tmp_path):
+    """The prompt the Statistics tab makes names the session's transcript,
+    for an agent to read the turns the numbers name. The path arrives in an
+    event, so only one `safe_transcript` lets through is named: under the
+    Claude directory, ending in .jsonl."""
+    inside = ws.settings_path().parent / "projects" / "-w" / "s1.jsonl"
+    session = ws.Session(session_id="s1", transcript_path=str(inside))
+    assert ws.summary_json(session, ws.Costs())["transcript"] == str(inside)
+    for wrong in (str(tmp_path / "s1.jsonl"), str(inside.with_suffix(".txt")), ""):
+        session.transcript_path = wrong
+        assert ws.summary_json(session, ws.Costs())["transcript"] == "", wrong
+
+
 def test_a_resume_the_cache_did_not_outlast_says_what_its_next_prompt_costs(ws):
     """Measured on 2.1.312: every resume's `SessionStart` says whether the
     cache likely expired, how many tokens the context is, and what caching

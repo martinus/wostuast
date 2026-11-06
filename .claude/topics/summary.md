@@ -229,6 +229,31 @@ can optimize my future sessions to produce less churn".
   and **a turn's tokens go on the line's hover**, as the reader chose:
   after the prompt, a long one cut them off.
   `test_the_costliest_turns_and_the_slowest_calls_have_bars`.
+- **Each view makes a prompt from its numbers** (`putViewHead`,
+  `sessionPrompt`, `monthPrompt`, `promptAsk`), as the reader asked: for
+  an agent to find what cuts the cost without losing much quality. Its
+  title line has two buttons, as the reader chose: "copy prompt", to paste
+  anywhere, and "put in send box" (`promptToSay`), which puts it in the
+  chosen session's send box, opened beside the tab, **after the reader's
+  own words**: a draft lost is work lost. **Nothing is sent**: the reader
+  presses Enter, as a command's "use" types nothing. A view with no
+  numbers has no buttons.
+  - **The prompt holds the tab's parts in its order, read by the tab's own
+    readers** (`forParts` for the split, `weightOf`, `callTime`), so the
+    prompt and the tab never say two things. Then what the agent is asked:
+    read the project's rules, find the causes, rank concrete changes by
+    what they save and what they could cost in quality, and **change
+    nothing before the reader picks**. A heading stands only over a list
+    that has lines.
+  - **It names the transcripts** (`transcript_of`, `summary_json`'s
+    `transcript`, the month's `transcripts`), as the reader asked: the
+    sums say what cost, a transcript says why. **Only a path
+    `safe_transcript` lets through**: it arrives in an event
+    (topics/safety). Quoted, with a line to read only the turns needed: a
+    transcript is large. **It asks for `/context`**: only Claude Code knows
+    how the start splits.
+  `test_a_session_names_its_transcript_only_where_it_may_be_opened`,
+  `test_each_view_makes_a_prompt_to_copy_or_to_put_in_the_send_box`.
 - **A day's spend is how much each session's total grew that day**
   (`Status.days`, `note_day`, `spend_by_day`, `spend_json`, `GET
   /api/spend`). Measured on 2.1.312 with `tests/claude_pane.py`: a session
