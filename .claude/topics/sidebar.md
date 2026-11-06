@@ -139,6 +139,15 @@ lines and icons, the chosen row, the grip, drags, folds, rows kept.
   on every row**: the name, with the time beside it; repository and
   worktree, with remote and path on hover; the branch, git's counts at the
   right edge; what the agent does or asks, only while it does.
+  - **The worktree copies its whole path on a click** (#715, `offerCopy`,
+    `copyToClipboard`), as the reader chose: to tell one session to read
+    another's worktree, after the Info tab that showed the path went. Its
+    hover says the path and the click; it says "copied" (`.copied`) for a
+    moment. **The click still chooses the row**: the name stands in the
+    row's middle, where a reader clicks to open a session, and a click that
+    only copied opened nothing there (14 tests went red). **A ticket link
+    in it opens and copies nothing**: the handler leaves a click on an `a`
+    alone. `test_a_rows_worktree_copies_its_whole_path`.
   - **Not the state**: edge, tint and group say it. Only a finished row
     keeps the word, because "ended" and "killed" share a group and a grey.
   - **The name is the one Claude Code shows** (`rowName`, `Session.title`,

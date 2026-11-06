@@ -1394,7 +1394,8 @@ def test_a_row_says_its_name_where_it_is_its_branch_and_when(rows_at):
         assert (fresh["repo"], fresh["tree"]) == ("agent", "bluefox")
         assert named["repoTitle"] == "https://example.com/team/agent.git"
         assert fresh["repoTitle"] == "no remote"
-        assert named["treeTitle"] == str(places["named"])
+        # The hover says the path, and that a click copies it (#715).
+        assert named["treeTitle"] == f'{places["named"]}\nclick to copy'
         assert named["branch"] == LONG_BRANCH     # the ellipsis is drawn
         assert "↑1" in named["git"] and "clean" in named["git"]
         assert "3 files" in fresh["git"]
@@ -1941,6 +1942,38 @@ def test_u_marks_the_session_on_screen_unread_until_another_is_chosen(ws, pair_a
         assert unread_of(page, "s1") is True
         page.click('.row[data-id="s1"]')
         page.wait_for_selector('.row[data-id="s1"]:not(.unread)')
+
+
+def test_a_rows_worktree_copies_its_whole_path(pair_at):
+    """The reader tells one session to read another's worktree, and the Info
+    tab that showed its path went (#715). The row's worktree shows the path
+    on a hover, and a click copies it, says so, and still chooses the row:
+    the name stands where a reader clicks to open a session."""
+    _, path = pair_at
+    with opened(path) as page:
+        page.wait_for_function("state.sessions.length === 2")
+        page.evaluate("""() => { window.copied = [];
+          copyToClipboard = async (text) => { window.copied.push(text); return true; }; }""")
+        other = page.evaluate("state.sessions.find((s) => s.id !== state.chosen)")
+        part = page.locator(f'#rows .row[data-id="{other["id"]}"] .worktree')
+        assert part.get_attribute("title") == other["worktree_path"] + "\nclick to copy"
+        part.click()
+        page.wait_for_function("window.copied.length === 1")
+        assert page.evaluate("window.copied") == [other["worktree_path"]]
+        assert other["worktree_path"].startswith("/")
+        page.wait_for_function("(id) => state.chosen === id", arg=other["id"])
+        assert "copied" in part.get_attribute("class")
+        page.wait_for_function(
+            "(sel) => !document.querySelector(sel).classList.contains('copied')",
+            arg=f'#rows .row[data-id="{other["id"]}"] .worktree')
+        # A ticket link in the worktree's name opens, and copies nothing.
+        page.evaluate("""(sel) => {
+          const a = document.createElement('a');
+          a.href = '#nowhere'; a.textContent = 'PROJ-1';
+          document.querySelector(sel + ' .text').append(a);
+        }""", f'#rows .row[data-id="{other["id"]}"] .worktree')
+        part.locator("a").click()
+        assert page.evaluate("window.copied") == [other["worktree_path"]], "the link copied"
 
 
 def test_the_row_offers_unread_on_a_read_row_only(ws, pair_at):
