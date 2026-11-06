@@ -52,13 +52,18 @@ can optimize my future sessions to produce less churn".
   only a fill asks for a landing. A subagent's line still opens its own
   transcript on the Transcript tab: that is no place in this one.
   `test_the_tool_results_kept_in_context_link_to_their_calls`.
-- **The tab is "Statistics": this session or all sessions this month, one
-  at a time behind a switch** (#653, #723, `drawSummary`, `statsView`,
-  `putStatsSwitch`, `putSession`, `putSpend`), as the reader chose from
-  pictures: side by side, the reader could not see how the lists related
-  or which mattered, and the month repeated the session's lists in another
-  colour. This browser keeps the choice (`wostuast-stats`). Its key in the
-  code stays `summary`.
+- **The tab is "Statistics": this session on the left, all sessions this
+  month on the right, the month under the session where they do not fit**
+  (#653, #723, `drawSummary`, `putSession`, `putSpend`), as the reader
+  chose: a switch between the two hid one. Its key in the code stays
+  `summary`.
+  - **Side by side, each part is one row over both columns** (`rowParts`,
+    `--row`, `.summary` in a container query, `.sumpart` as `display:
+    contents`): in two columns of their own, a part drifted away from its
+    partner. What stands before the first part is row 1 (`.sumtop`). One
+    under the other, the sections keep their order.
+  - **Each part is a panel of its own** (`.sumgroup`), as the reader asked,
+    so where one part ends shows.
   - **Both views have the same numbered parts, each with the question it
     answers** (`putSumPart`, `.sumgroup`, `.sumask`): what it cost, where
     the money went, where the time went. The month has no third: the
@@ -73,10 +78,10 @@ can optimize my future sessions to produce less churn".
     time by tool counts each tool's calls; the subagents by kind went, as
     the line each subagent has says its kind. The daemon sends neither
     (`summary_json`), and `Costs` counts no calls by tool.
-  - **At most two columns of cards, 1100 px wide** (#683, `.summary`,
-    `.sumcards`, `putSumCard`): a line is read across without a long jump.
-    The grid is `auto-fill`, so a narrow pane gets one column with no
-    media query.
+  - **The two views stand side by side from 1136 px of pane** (#683): each
+    needs 540 px, so they do on a 1920 px screen with the session list
+    open. The cards of a view are `auto-fill`, so a narrow view gets one
+    column with no media query.
     `test_the_statistics_tab_uses_a_wide_screen`.
 - **The session's time and tokens are charts, not tiles** (#688,
   `putSumClock`, `putSumKinds`, `TOKEN_KINDS`, `weighted`): the reader
@@ -228,10 +233,10 @@ can optimize my future sessions to produce less churn".
     real transcripts the turns were the same and the read 10 to 30 times
     faster: 65 MB in 0.3 s. The readers are kept by path (`cost_readers`),
     read on from where they stopped, under `spend_lock`.
-  - **Every list's bars are one colour, the session's and the month's**
-    (#723): one view shows at a time, so no second colour has to say
-    which a list is of. The month's own blue (#698) went with the two
-    sections side by side.
+  - **The month's bars are its charts' blue, the session's amber**
+    (`.sumpart.month .sumbar`, #698), as the reader asked: side by side, a
+    glance says which column a list is of. A switch between the views
+    (#723) dropped it for a while; side by side again, it came back.
   - **A hover or the focus on a line marks its days on both charts**
     (`markSpend`, a session's `days`, a turn's `day`), as the reader asked:
     a band behind each day it spent, its running total with its amount at

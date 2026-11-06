@@ -251,7 +251,7 @@ where you left it: the tab, the open file, and your place in it.
 | **Transcript** | What the agent said and did, with a map of the conversation beside it. For a session that is over, the command that brings it back (`claude --resume`), to copy. |
 | **Files** | Every file in the worktree as a tree, with syntax colour and go-to-file. |
 | **Review** | What changed, file by file, with your comments on it and the bar to send them. |
-| **Statistics** | This session, or all sessions this month, behind a switch: what it cost, where the money went (the costliest turns, the tool results that stayed in context longest), and for a session where the time went (by tool, the slowest calls, the subagents). The month adds what was spent each day, and the way to your allowance. |
+| **Statistics** | This session, and beside it all sessions this month: what it cost, where the money went (the costliest turns, the tool results that stayed in context longest), and for a session where the time went (by tool, the slowest calls, the subagents). The month adds what was spent each day, and the way to your allowance. |
 
 When a switch to another session or tab takes a moment, for example over a
 slow ssh tunnel, the old content dims and a label says what is loading. The
@@ -442,9 +442,11 @@ words marked.
 
 #### Statistics
 
-A switch at the top shows **This session** or **This month, all sessions**.
-Your browser keeps your choice. Both views show the same parts in the same
-order, and each part answers one question:
+**This session** stands on the left and **This month, all sessions** on
+the right. In a narrow window, the month stands under the session. Both
+show the same parts in the same order, each on a panel of its own, and side
+by side a part stands level with its partner. Each part answers one
+question:
 
 1. **What it cost.** The tokens as one bar in four parts: output, cache
    written, input and cache read. Each part is as wide as its share of what

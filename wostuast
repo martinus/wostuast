@@ -16466,24 +16466,38 @@ body.switching #content::after {
    session's transcript. */
 .content.agentview .turnacts { display: none; }
 .content.agentview .who .self { cursor: default; }
-/* The Statistics tab (issue 622): this session or all sessions this month
-   (issue 653), one at a time behind a switch, in the same three parts
-   (issue 723): the reader could not see how the lists related when both
-   stood side by side. At most two columns of cards (issue 683), so a line
-   is read across without a long jump. */
-.summary { max-width: 1100px; }
-.statswitch {
-  display: inline-flex; margin: 0 0 18px; border: 1px solid var(--edge-bright);
-  border-radius: 6px; overflow: hidden;
+/* The Statistics tab (issue 622): this session on the left, all sessions
+   this month on the right (issue 653), in the same parts (issue 723); the
+   month under the session where the two do not fit side by side. A switch
+   between them hid one, and the reader wanted both in view. */
+.summarybox { container-type: inline-size; }
+.summary { display: flex; flex-direction: column; gap: 30px; }
+/* Side by side, each part is one row of a grid over both columns, so the
+   session's "What it cost" stands level with the month's (issue 723): in
+   two columns of their own the parts drifted apart. `--row` is the part's
+   row (`rowParts`); the sections' own boxes give way to the grid. */
+@container (min-width: 1136px) {
+  .summary {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0 40px; align-items: stretch;
+  }
+  .summary > .sumpart { display: contents; }
+  .summary > .sumpart > * { grid-row: var(--row); grid-column: 1; }
+  .summary > .sumpart.month > * { grid-column: 2; }
 }
-.statswitch > button {
-  padding: 6px 14px; border: 0; background: none; color: var(--ink-mute);
-  font: 13px var(--sans); cursor: pointer;
+.sumpart > .sumview { margin: 0 0 12px; font-size: 17px; font-weight: 600; color: var(--ink-bright); }
+/* The month's bars in its charts' colour, the session's in its own
+   (issue 698): side by side, a glance says which a list is of. */
+.sumpart.month .sumbar { background: var(--spend); }
+/* A part: its number and title, the question it answers, then its lists,
+   on a panel of its own (issue 723), so where one part ends shows. */
+.sumgroup {
+  margin: 20px 0 0; padding: 14px 18px 18px; border: 1px solid var(--edge);
+  border-radius: 8px; background: var(--panel);
 }
-.statswitch > button[aria-pressed="true"] { background: var(--raised); color: var(--ink-bright); }
-.statswitch > button:hover { color: var(--ink-bright); }
-/* A part: its number and title, the question it answers, then its lists. */
-.sumgroup { margin: 28px 0 0; }
+.sumgroup > .sumcards > .sumcard:first-child .sumtitle,
+.sumgroup > .sumask + .sumcard .sumtitle,
+.sumgroup > .sumask + * > .sumtitle:first-child { margin-top: 12px; }
 .sumgroup > .sumsection { margin: 0 0 2px; }
 .sumgroup > .sumask { margin: 0 0 4px; font-size: 12.5px; color: var(--ink-mute); }
 .sumpart, .sumcard { min-width: 0; }
@@ -28402,36 +28416,34 @@ function drawSummary(box) {
     box.dataset.listKey = box.dataset.bodyKey = box.dataset.summaryKey = "";
   }
   const allowance = setting("allowance") || 0;
-  const view = statsView();
-  if (!fresh(box, "summaryKey",
-             JSON.stringify([state.chosen, got, state.spend, allowance, view]))) return;
+  if (!fresh(box, "summaryKey", JSON.stringify([state.chosen, got, state.spend, allowance]))) return;
   box.replaceChildren();
   const pane = put(box, "div", "summary");
-  // This session or all of them this month (#653), one at a time (#723).
-  putStatsSwitch(pane, view);
-  if (view === "month") putSpend(put(pane, "section", "sumpart month"), state.spend, allowance);
-  else putSession(put(pane, "section", "sumpart"), got);
+  // This session, and beside it all of them this month (#653), in the same
+  // parts (#723). A switch between the two hid one, and the reader wanted
+  // both in view; the month goes under the session where they do not fit.
+  const mine = put(pane, "section", "sumpart");
+  put(mine, "h2", "sumview", "This session");
+  putSession(mine, got);
+  rowParts(mine);
+  const month = put(pane, "section", "sumpart month");
+  put(month, "h2", "sumview", "This month, all sessions");
+  putSpend(month, state.spend, allowance);
+  rowParts(month);
 }
 
-// Which the Statistics tab shows, this session or all sessions this month
-// (#723), as the reader chose: one layout and a switch. Both at once were
-// one long page, and the month repeated the session's lists in another
-// colour. This browser keeps the choice, as it keeps the transcript column.
-function statsView() { return stored("wostuast-stats") === "month" ? "month" : "session"; }
-
-function putStatsSwitch(pane, view) {
-  const row = put(pane, "div", "statswitch");
-  for (const [which, words] of [["session", "This session"],
-                                ["month", "This month, all sessions"]]) {
-    const button = put(row, "button", null, words);
-    button.type = "button";
-    button.dataset.view = which;
-    button.setAttribute("aria-pressed", String(view === which));
-    button.addEventListener("click", () => {
-      store("wostuast-stats", which === "month" ? "month" : "");
-      draw();
-    });
+// The rows of one view's parts (#723), for the grid that puts the two
+// views side by side: what stands before the first part is row 1, in a box
+// of its own, and each part the next row. Read by CSS only where the two
+// fit side by side; one under the other, the sections keep their order.
+function rowParts(section) {
+  const top = document.createElement("div");
+  top.className = "sumtop";
+  while (section.firstChild && !section.firstChild.classList.contains("sumgroup")) {
+    top.appendChild(section.firstChild);
   }
+  section.prepend(top);
+  [...section.children].forEach((child, at) => child.style.setProperty("--row", at + 1));
 }
 
 // One of the parts both views share (#723), numbered, with the question it
