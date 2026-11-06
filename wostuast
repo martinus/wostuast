@@ -16641,7 +16641,10 @@ body.switching #content::after {
 .eachturn.link { cursor: pointer; }
 .eachturn.link:hover { fill: var(--needs-warm); }
 .ctxhit:hover { fill: color-mix(in srgb, var(--ink) 10%, transparent); }
-.sumpart > .sumview { margin: 0 0 12px; font-size: 17px; font-weight: 600; color: var(--ink-bright); }
+.sumview { margin: 0; font-size: 17px; font-weight: 600; color: var(--ink-bright); }
+/* A view's title, and its prompt's two buttons at the line's end. */
+.sumviewhead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 12px; }
+.sumacts { display: flex; gap: 8px; margin-left: auto; }
 /* The month's bars in its charts' colour, the session's in its own
    (issue 698): side by side, a glance says which a list is of. */
 .sumpart.month .sumbar { background: var(--spend); }
@@ -28585,11 +28588,13 @@ function drawSummary(box) {
   // between the two hid one, and the reader wanted both in view; the
   // session goes under the month where they do not fit.
   const month = put(pane, "section", "sumpart month");
-  put(month, "h2", "sumview", "This month, all sessions");
-  putSpend(month, state.spend, allowance);
+  const spend = state.spend;
+  putViewHead(month, "This month, all sessions",
+              spend && spend.since ? () => monthPrompt(spend, allowance) : null);
+  putSpend(month, spend, allowance);
   rowParts(month);
   const mine = put(pane, "section", "sumpart");
-  put(mine, "h2", "sumview", "This session");
+  putViewHead(mine, "This session", got ? () => sessionPrompt(got) : null);
   putSession(mine, got);
   rowParts(mine);
   old.forEach((one) => one.remove());
@@ -29270,22 +29275,7 @@ function putSumKinds(parent, got, scale = null) {
 // and writing the replies. Shares of the same whole as the bar above and
 // the results' own share, so the numbers add up across the tab.
 function putSumFor(parent, got) {
-  const read = got.read;
-  const writing = (got.weighted || {}).output_tokens || 0;
-  if (!read) return;
-  const parts = [
-    [read.start, "the start: system prompt, tools, CLAUDE.md",
-     "every reply reads it again. About: "
-     + (read.start_tokens === undefined
-       ? "each session's smallest context, read again by each of its replies"
-       : "the smallest context any reply read, " + roughly(read.start_tokens)
-         + " tokens, read again by every reply")],
-    [read.conversation, "the conversation: prompts, replies, what the calls sent",
-     "the rest of what the replies read: what was said, and the input of each call, such"
-     + " as the text an Edit or a Write sends"],
-    [read.results, "tool results kept in context",
-     "every later reply reads a result again, until a compaction or a /clear"],
-    [writing, "writing the replies", "the output tokens"]];
+  const parts = forParts(got);
   const whole = parts.reduce((sum, [weight]) => sum + (weight || 0), 0);
   if (!whole) return;
   const card = putSumCard(parent, "tokens, by what they were for");
@@ -29299,6 +29289,27 @@ function putSumFor(parent, got) {
     putSumBar(line, (weight || 0) / most).classList.add("for" + (at + 1));
     put(line, "span", "sumsaid", said);
   });
+}
+
+// The four parts of what the tokens were for, each [weight, what it is,
+// how it is counted], or none: one reader for the list and the prompt.
+function forParts(got) {
+  const read = got.read;
+  const writing = (got.weighted || {}).output_tokens || 0;
+  if (!read) return [];
+  return [
+    [read.start, "the start: system prompt, tools, CLAUDE.md",
+     "every reply reads it again. About: "
+     + (read.start_tokens === undefined
+       ? "each session's smallest context, read again by each of its replies"
+       : "the smallest context any reply read, " + roughly(read.start_tokens)
+         + " tokens, read again by every reply")],
+    [read.conversation, "the conversation: prompts, replies, what the calls sent",
+     "the rest of what the replies read: what was said, and the input of each call, such"
+     + " as the text an Edit or a Write sends"],
+    [read.results, "tool results kept in context",
+     "every later reply reads a result again, until a compaction or a /clear"],
+    [writing, "writing the replies", "the output tokens"]];
 }
 
 // What each turn cost, in order (#723): a column a turn, as the month's
@@ -29594,6 +29605,210 @@ function drawEmpty(box) {
   const p = put(empty, "p", null, "If nothing ever appears, run ");
   put(p, "code", null, "wostuast doctor");
   p.appendChild(document.createTextNode(" to see what is missing."));
+}
+
+// --- the Statistics tab's prompt: its numbers for an agent that finds what cuts the cost [topics/summary]
+
+// A line break in a prompt.
+const NL = "\n";
+
+// A view's title, with the two ways out for its prompt when it has
+// numbers, as the reader chose: onto the clipboard, to paste anywhere, a
+// fresh session say, or into this session's send box, to read and send.
+// Nothing is sent: the reader presses Enter.
+function putViewHead(parent, title, make) {
+  const head = put(parent, "div", "sumviewhead");
+  put(head, "h2", "sumview", title);
+  if (!make) return;
+  const acts = put(head, "div", "sumacts");
+  const copy = put(acts, "button", "verb quiet promptcopy", "copy prompt");
+  const copyTitle = "copy these numbers as a prompt, for an agent to find what cuts the cost";
+  copy.title = copyTitle;
+  copy.addEventListener("click", async () => {
+    const done = await copyToClipboard(make());
+    flashOutcome(copy, "copy prompt", copyTitle, done,
+                 done ? "copied" : "the browser would not copy it", ["copied", "not copied"]);
+  });
+  const say = put(acts, "button", "verb quiet promptsay", "put in send box");
+  say.title = "put the prompt in this session's send box, to read and send";
+  say.addEventListener("click", () => promptToSay(make()));
+}
+
+// The prompt in the chosen session's send box, opened beside the tab, for
+// the reader to read and send, as a command's "use" puts one there. Words
+// the reader typed stay, before it: a draft lost is work lost.
+function promptToSay(text) {
+  const why = whyNoText(sessionById(state.chosen));
+  if (why) { note(why); return; }
+  const box = $("say");
+  const draft = box.value.replace(/\s+$/, "");
+  box.value = draft ? draft + NL + NL + text : text;
+  showInChat();
+  fitSay(box);
+  box.focus();
+  box.setSelectionRange(box.value.length, box.value.length);
+}
+
+// The tokens of some turns, by what they cost and by what they were for,
+// as lines of a prompt: the two lists of "What it cost".
+function promptTokens(got) {
+  const lines = [];
+  const total = weightOf(got);
+  if (total) {
+    const t = got.tokens || {};
+    const weighted = got.weighted || {};
+    lines.push("- Tokens by what they cost: " + TOKEN_KINDS.map(([field, name]) => name + " "
+      + Math.round(100 * (weighted[field] || 0) / total) + "% (" + roughly(t[field] || 0)
+      + " tokens)").join(", ") + ". A cache read weighs a tenth of an input token, a cache"
+      + " write 1.25, an output 5.");
+  }
+  const parts = forParts(got);
+  const whole = parts.reduce((sum, [weight]) => sum + (weight || 0), 0);
+  if (whole) {
+    lines.push("- Tokens by what they were for:");
+    for (const [weight, said, title] of parts) {
+      lines.push("  - " + Math.round(100 * (weight || 0) / whole) + "%, " + said + ". "
+                 + title[0].toUpperCase() + title.slice(1) + ".");
+    }
+  }
+  return lines;
+}
+
+// A session the month names, in quotes, as a name may end in a full stop:
+// its name on the page, else the status line's.
+function promptName(one) {
+  const s = sessionById(one.id);
+  return JSON.stringify(s ? rowName(s) : one.name || one.id.slice(0, 8));
+}
+
+// What the agent is asked to do with the numbers, as the reader asked:
+// concrete changes that cut the cost without losing much quality, ranked,
+// and nothing changed before the reader picks. The levers are those the
+// numbers can point at; the agent checks each against the project.
+function promptAsk(month) {
+  return ["## What I want from you", "",
+    "1. Read the project's CLAUDE.md, its .claude folder (rules, skills, commands, settings)"
+    + " and the files and commands named above.",
+    "2. Find what made " + (month ? "these sessions" : "this session") + " cost what "
+    + (month ? "they" : "it") + " did. Use the numbers: what every reply reads again (the"
+    + " start), the tool results that stayed in context, the costliest turns, the slowest calls."
+    + (month ? " Look for habits that repeat across sessions: the same files read at every"
+      + " start, the same long command output." : ""),
+    "3. Suggest concrete changes that cut the cost without losing much quality. For each: what"
+    + " to change (a file, a setting, a command, a habit), about how much it saves by the"
+    + " numbers above, and what it could cost in quality.",
+    "4. Rank them by what they save. Change nothing yet: ask me which to make.", "",
+    "Levers to check, where the numbers point at them:",
+    "- A shorter CLAUDE.md, with rules moved into files read only when their subject comes up.",
+    "- Fewer MCP servers and tools: their definitions are part of the start.",
+    "- Narrower reads and quieter commands: a range of lines instead of a whole file, a"
+    + " search instead of a read, a quiet flag or a tail on long output.",
+    "- Searches and long reads in a subagent, so only its answer stays in context.",
+    "- /clear between tasks, and /compact before a long one.",
+    "- A smaller model for subagents and simple tasks."];
+}
+
+// This session's numbers as a prompt, as the reader asked: the parts of
+// the tab in its order, then what the agent is asked to do.
+function sessionPrompt(got) {
+  const s = sessionById(got.id);
+  const lines = ["# Cut what my Claude Code sessions cost", "",
+    "These are the numbers wostuast keeps about one Claude Code session"
+    + (s ? ", " + JSON.stringify(rowName(s)) + (s.cwd ? ", in " + s.cwd : "") : "")
+    + ". Dollars are Claude"
+    + " Code's own estimate at list price; \u2248 is a share of it, by the tokens used.", "",
+    "## What it cost", "",
+    "- Spent: " + (got.cost_usd === null || got.cost_usd === undefined ? "not known"
+                   : cents(got.cost_usd)) + ", in " + counted(got.turns || 0, "turn", "turns")
+    + "; busy " + lasted(got.busy || 0) + (got.wall_ms ? " of " + lasted(got.wall_ms / 1000) : "")
+    + (got.api_ms ? "; the model worked " + lasted(got.api_ms / 1000) : "") + ".",
+    ...promptTokens(got)];
+  const points = (got.context && got.context.points) || [];
+  if (points.length) {
+    lines.push("- Context: " + counted(got.context.replies, "reply", "replies") + "; the smallest"
+               + " read " + roughly(got.context.least) + " tokens, the largest "
+               + roughly(Math.max(...points.map(([all]) => all))) + ".");
+  }
+  lines.push("", "## Where the money went", "", "The costliest turns:", "");
+  (got.costly || []).forEach((one, at) => lines.push((at + 1) + ". "
+    + (one.usd === null ? "" : "\u2248" + cents(one.usd) + ": ") + JSON.stringify(one.said)
+    + ", " + counted(one.replies || 0, "reply", "replies") + "."));
+  const carried = got.carried || {};
+  if ((carried.results || []).length) {
+    lines.push("", "Tool results kept in context, all of them "
+               + Math.round(100 * (carried.share || 0)) + "% of what the session spent. A result"
+               + " costs again in every later reply, until a compaction or a /clear:", "");
+    for (const one of carried.results) {
+      lines.push("- " + (one.usd === null ? "" : "\u2248" + cents(one.usd) + ": ")
+                 + [one.tool, one.what].filter(Boolean).join(" ") + ", " + roughly(one.tokens)
+                 + " tokens, read by " + counted(one.replies, "reply", "replies")
+                 + (one.kept ? ", still in context" : "") + ".");
+    }
+  }
+  lines.push("", "## Where the time went", "", ...promptTime(got.tool_time || [], got.slow || []));
+  for (const one of (s && s.subagents) || []) {
+    lines.push("- Subagent " + (one.kind || "") + ": " + counted(one.calls || 0, "call", "calls")
+               + (one.tokens ? ", " + roughly(one.tokens) + " tokens" : "")
+               + (one.what ? ": " + JSON.stringify(one.what) : "") + ".");
+  }
+  return [...lines, "", ...promptAsk(false)].join(NL);
+}
+
+// Time by tool and the slowest calls, as lines of a prompt; a month's call
+// names its session.
+function promptTime(tools, slow) {
+  const lines = tools.map((one) => "- " + one.tool + ": " + counted(one.calls, "call", "calls")
+                          + ", " + callTime(one.seconds) + ".");
+  if (slow.length) {
+    lines.push("- The slowest calls: " + slow.map((one) => (one.id ? promptName(one) + ": " : "")
+      + one.tool + " " + JSON.stringify(one.what) + " " + callTime(one.seconds)).join("; ") + ".");
+  }
+  return lines;
+}
+
+// All sessions' numbers this month as a prompt, as the reader asked, to
+// find habits across sessions; the month's parts in their order.
+function monthPrompt(spend, allowance) {
+  const spent = spend.days.reduce((sum, one) => sum + one, 0);
+  const lines = ["# Cut what my Claude Code sessions cost", "",
+    "These are the numbers wostuast keeps about all my Claude Code sessions this month, since "
+    + spendDay(spend.since) + ". Dollars are Claude Code's own estimate at list price; \u2248 is"
+    + " a share of it, by the tokens used. Turns, results and times come only from the"
+    + " sessions wostuast still keeps.", "",
+    "## What it cost", "",
+    "- Spent: " + cents(spent) + " in " + counted(spend.days.length, "day", "days") + "; at this"
+    + " pace " + cents(spent / spend.days.length * spend.length) + " for the month"
+    + (allowance ? ", against an allowance of " + cents(allowance) : "") + ".",
+    ...promptTokens(spend.kinds || {}), "", "## Where the money went", "", "The costliest sessions:", ""];
+  for (const one of spend.sessions || []) {
+    const s = sessionById(one.id);
+    lines.push("- " + cents(one.usd) + ": " + promptName(one) + (s && s.cwd ? ", in " + s.cwd : "") + ".");
+  }
+  lines.push("", "The costliest turns:", "");
+  (spend.turns || []).forEach((one, at) => lines.push((at + 1) + ". \u2248" + cents(one.usd) + ": "
+    + promptName(one) + ": " + JSON.stringify(one.said) + "."));
+  const carried = spend.carried;
+  if (carried && carried.results.length) {
+    lines.push("", "Tool results kept in context, all of them \u2248" + cents(carried.usd) + ". By tool:", "");
+    for (const one of carried.tools) {
+      lines.push("- " + one.tool + ": \u2248" + cents(one.usd) + ", " + counted(one.calls, "call", "calls")
+                 + ", " + roughly(one.tokens) + " tokens.");
+    }
+    lines.push("", "The costliest of them:", "");
+    for (const one of carried.results) {
+      lines.push("- \u2248" + cents(one.usd) + ": " + promptName(one) + ": "
+                 + [one.tool, one.what].filter(Boolean).join(" ") + ", " + roughly(one.tokens)
+                 + " tokens, read by " + counted(one.replies, "reply", "replies") + ".");
+    }
+  }
+  const time = spend.time;
+  if (time && (time.busy || []).some((one) => one > 0)) {
+    const busy = time.busy.reduce((sum, one) => sum + one, 0);
+    lines.push("", "## Where the time went", "", "- Busy: " + lasted(busy) + " in all, "
+               + lasted(Math.max(...time.busy)) + " on the busiest day.",
+               ...promptTime(time.tool_time || [], time.slow || []));
+  }
+  return [...lines, "", ...promptAsk(true)].join(NL);
 }
 
 // --- the place a session keeps, and choosing a session [topics/tab-state]
