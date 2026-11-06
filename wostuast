@@ -28136,6 +28136,22 @@ function paintChat() {
   fillTurns(pane, chat.querySelector(":scope > .tofoot"));
 }
 
+// A place in the transcript that the Statistics tab asks for (#728): a
+// turn, a call kept in context, a slow call. In the column beside the tab,
+// opened if it was folded, as the reader asked: the Transcript tab took the
+// reader away from the numbers they were reading. The caller has chosen the
+// session and set the place (`goTo` and the rest). The column is filled
+// again, so it lands there: one that shows the same blocks is left as it
+// is (`paintChat`), and only a fill asks for a landing (`toLand`).
+function showInChat() {
+  if (!chatWanted()) store("wostuast-chat", "1");
+  const pane = $("chat").querySelector(":scope > .turnbody");
+  if (pane) pane.drawnBlocks = null;
+  drawHeader();
+  draw();
+  if (!state.turns.whole) loadTranscript();
+}
+
 // The column folded (issue 712): its head with the button alone, where the
 // open column's stands, and the word under it, which opens it too.
 function putChatStrip(chat) {
@@ -28528,7 +28544,7 @@ function putMonthTurns(pane, turns, charts) {
       // the counts were read without the blocks, so no `seq` is sent.
       state.turns.goTo = 0;
       state.turns.goToTs = one.ts;
-      showTab("transcript");
+      showInChat();
     });
   }
 }
@@ -28574,7 +28590,7 @@ function putMonthCarried(pane, carried, charts, spent) {
       choose(one.id);
       state.turns.goTo = 0;
       state.turns.goToCall = one.call;
-      showTab("transcript");
+      showInChat();
     });
   }
   const tools = put(putSumCard(pane, "kept in context, by tool"), "div", "sumlist");
@@ -28913,7 +28929,7 @@ function putCostly(pane, got) {
     line.addEventListener("click", () => {
       state.turns.goTo = one.seq;
       state.turns.goToTs = one.ts;
-      showTab("transcript");
+      showInChat();
     });
   }
 }
@@ -28947,7 +28963,7 @@ function putSumCarried(pane, got) {
     line.addEventListener("click", () => {
       state.turns.goTo = 0;
       state.turns.goToCall = one.call;
-      showTab("transcript");
+      showInChat();
     });
   }
 }
@@ -28983,7 +28999,7 @@ function putSumTime(pane, got) {
       // a search result's does.
       state.turns.goTo = 0;
       state.turns.goToNear = one.began;
-      showTab("transcript");
+      showInChat();
     });
   }
 }
