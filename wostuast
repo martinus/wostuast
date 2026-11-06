@@ -4911,6 +4911,45 @@ class TurnCost:
     read_weight: float = 0.0
     read_per: float = 0.0
     read_results: float = 0.0
+    #: The context its first reply read: a turn begun on the turns before
+    #: it, where a /clear would have started it from the start alone.
+    began: int = 0
+
+
+@dataclass
+class CacheMiss:
+    """A reply that wrote its context to the cache again, though the reply
+    before had cached it (`Costs.note_miss`): the cache had gone."""
+
+    turn: int = 0               # an index into `Costs.turns`
+    ts: float = 0.0
+    tokens: int = 0             # what was cached already, written again
+    weight: float = 0.0         # writing them again over reading them
+    pause: float = 0.0          # seconds since the reply before
+    model: bool = False         # the reply before was another model's
+
+
+#: A reply that writes this share of its context to the cache, or more,
+#: wrote what the reply before had cached: a miss (`Costs.note_miss`).
+MISS_SHARE = 0.5
+
+#: A pause this long, or longer, outlasts the cache's default life of five
+#: minutes: a miss after one is put down to it.
+PAUSE_LONG = 300.0
+
+
+def context_of(used: dict[str, Any]) -> int:
+    """The tokens a reply read its context as: the context's size."""
+    return sum(count for key in CONTEXT_KEYS
+               if isinstance(count := used.get(key), int) and count > 0)
+
+
+def read_key(given: Any) -> str:
+    """What a `Read` read, its file and its lines, so a second read of the
+    same is known; "" for none."""
+    if not isinstance(given, dict) or not given.get("file_path"):
+        return ""
+    return ":".join(str(given.get(key) or "") for key in ("file_path", "offset", "limit"))
 
 
 #: The kinds of token a reply reads its context as: the context's size is
@@ -4951,6 +4990,10 @@ class ResultCost:
     weight: float = 0.0     # what it cost, once it left the context
     replies: int = 0
     gone: bool = False
+    #: A `Read`'s file and lines (`read_key`), and whether the same was in
+    #: context already when it came: a second copy, read by every reply.
+    key: str = ""
+    again: bool = False
 
     def target(self) -> str:
         """Its target, read the first time it is asked for, for the few the
@@ -4991,6 +5034,8 @@ class Carry:
     #: (an index into `Costs.turns`), for the chart of the context reply by
     #: reply.
     points: list[tuple[int, int, int]] = field(default_factory=list)
+    #: How many results of each `read_key` are in context now.
+    live_keys: dict[str, int] = field(default_factory=dict)
 
     def called(self, record: dict[str, Any], blocks: list["Block"]) -> None:
         """A reply's calls, kept until their results come. Its target is
@@ -5004,7 +5049,8 @@ class Carry:
             call, tool = str(part.get("id") or ""), str(part.get("name") or "?")
             block, given = made.get(call), part.get("input")
             one = self.calls[call] = ResultCost(
-                call=call, ts=parse_timestamp(record.get("timestamp")), tool=tool)
+                call=call, ts=parse_timestamp(record.get("timestamp")), tool=tool,
+                key=read_key(given) if tool == "Read" else "")
             if block is not None:
                 one.what = block.target
             elif tool in PATCHED_TOOLS | COUNTED_TOOLS:
@@ -5064,6 +5110,9 @@ class Carry:
                 one.tokens = grew * one.chars / chars if chars else 0.0
                 if one.tokens:
                     one.since, one.since_n = self.read_sum, self.read_n
+                    if one.key:
+                        one.again = self.live_keys.get(one.key, 0) > 0
+                        self.live_keys[one.key] = self.live_keys.get(one.key, 0) + 1
                     self.live.append(one)
                     self.results.append(one)
                     self.live_tokens += one.tokens
@@ -5099,6 +5148,7 @@ class Carry:
             one.weight, one.replies = self.weighed(one)
             one.gone = True
         self.live, self.waiting, self.other = [], [], 0
+        self.live_keys = {}
         self.live_tokens = 0.0
         self.last_context = self.last_out = 0
 
@@ -5121,6 +5171,11 @@ class Costs:
     turns: list[TurnCost] = field(default_factory=list)
     seen: set[str] = field(default_factory=set)
     carry: Carry = field(default_factory=Carry)
+    #: The replies that found the cache gone, and the reply before's moment
+    #: and model, to say why (`note_miss`).
+    misses: list[CacheMiss] = field(default_factory=list)
+    last_ts: float = 0.0
+    last_model: str = ""
 
     def take(self, record: dict[str, Any], blocks: list["Block"]) -> None:
         """One record of the transcript, and the blocks it made."""
@@ -5146,7 +5201,12 @@ class Costs:
         if not self.turns:
             self.turns.append(TurnCost(said="(before the first prompt)"))
         turn = self.turns[-1]
+        cached = self.carry.last_context
         read = self.carry.read(used, len(self.turns) - 1)
+        if not turn.replies:
+            turn.began = context_of(used)
+        self.note_miss(used, cached, parse_timestamp(record.get("timestamp")),
+                       str(message.get("model") or ""))
         turn.replies += 1
         if read:
             turn.read_weight += read[0]
@@ -5157,6 +5217,26 @@ class Costs:
             if isinstance(count, int) and count > 0:
                 turn.tokens[key] = turn.tokens.get(key, 0) + count
                 turn.weight += weight * count
+
+    def note_miss(self, used: dict[str, Any], cached: int, ts: float, model: str) -> None:
+        """A reply that wrote `MISS_SHARE` of its context to the cache, or
+        more, though the reply before had cached `cached` tokens: the cache
+        had gone, after a pause or a change of model. What was cached
+        already cost a write over a read. A context that fell
+        (`CONTEXT_FELL`) is new, after a compaction or a /clear: no miss."""
+        written = used.get("cache_creation_input_tokens")
+        context = context_of(used)
+        if (cached and context >= cached * CONTEXT_FELL and isinstance(written, int)
+                and written >= MISS_SHARE * context):
+            again = min(written, cached)
+            self.misses.append(CacheMiss(
+                turn=len(self.turns) - 1, ts=ts, tokens=again,
+                weight=again * (TOKEN_WEIGHTS["cache_creation_input_tokens"]
+                                - TOKEN_WEIGHTS["cache_read_input_tokens"]),
+                pause=ts - self.last_ts if ts and self.last_ts else 0.0,
+                model=bool(model and self.last_model and model != self.last_model)))
+        self.last_ts = ts or self.last_ts
+        self.last_model = model or self.last_model
 
 
 def turn_share(cost: float | None, weight: float, total: float) -> float | None:
@@ -10600,7 +10680,53 @@ def summary_json(session: Session, costs: Costs) -> dict[str, Any]:
         # Its transcript, for the prompt the tab makes: an agent reads the
         # turns the numbers name. Only one `safe_transcript` passes.
         "transcript": transcript_of(session),
+        # What cost more than it had to, for part 4.
+        "cheaper": cheaper_json(costs, status.cost_usd, total),
     }
+
+
+def old_context(turn: TurnCost, least: int) -> float:
+    """What the context a turn began on cost its replies past the start
+    every reply reads again, weighted; nought for a turn that began on
+    less than twice the start, as nearly every first turn does."""
+    if not least or turn.began < 2 * least:
+        return 0.0
+    return (turn.began - least) * turn.read_per
+
+
+def cheaper_json(costs: Costs, cost: float | None, total: float) -> dict[str, Any]:
+    """What cost a session more than it had to, as the reader asked: the
+    replies that found the cache gone, the files read again while a copy
+    was still in context, and the turns begun on the context of the turns
+    before them. Each dollar amount a share, as a turn's is."""
+    turns = costs.turns
+    missed = sum(one.weight for one in costs.misses)
+    misses = [{"turn": one.turn, "seq": turns[one.turn].seq, "ts": turns[one.turn].ts,
+               "tokens": one.tokens, "pause": round(one.pause, 1), "model": one.model,
+               "weight": round(one.weight, 1), "usd": turn_share(cost, one.weight, total)}
+              for one in sorted(costs.misses, key=lambda one: -one.weight)[:COSTLY_SHOWN]]
+    again: dict[str, dict[str, Any]] = {}
+    for one in costs.carry.results:
+        if not one.key:
+            continue
+        held = again.setdefault(one.key, {"what": one.target(), "times": 0, "tokens": 0,
+                                          "weight": 0.0})
+        held["times"] += 1
+        held["tokens"] = max(held["tokens"], round(one.tokens))
+        if one.again:
+            held["weight"] += costs.carry.weighed(one)[0]
+    large = sorted(((at, old_context(turn, costs.carry.least)) for at, turn in enumerate(turns)),
+                   key=lambda one: -one[1])
+    return {"misses": {"count": len(costs.misses), "usd": turn_share(cost, missed, total),
+                       "share": round(missed / total, 4) if total else 0.0, "list": misses},
+            "again": [{**one, "weight": round(one["weight"], 1),
+                       "usd": turn_share(cost, one["weight"], total)}
+                      for one in sorted(again.values(), key=lambda one: -one["weight"])
+                      if one["weight"]][:COSTLY_SHOWN],
+            "large": [{"turn": at, "seq": turns[at].seq, "ts": turns[at].ts,
+                       "said": turns[at].said, "began": turns[at].began,
+                       "weight": round(weight, 1), "usd": turn_share(cost, weight, total)}
+                      for at, weight in large[:COSTLY_SHOWN] if weight]}
 
 
 def transcript_of(session: Session) -> str:
@@ -10679,6 +10805,65 @@ def month_time_json(now: float, sessions: Iterable[Session]) -> dict[str, Any]:
             "slow": [{"id": session_id, "tool": one.tool, "what": one.what,
                       "seconds": round(one.seconds, 3), "began": round(one.began, 3)}
                      for one, session_id in slow[:SLOW_KEPT]]}
+
+
+def month_cheaper_json(now: float, statuses: dict[str, Status],
+                       costs: dict[str, Costs]) -> dict[str, Any]:
+    """What cost all sessions more than it had to this month, as the reader
+    asked: what each model spent, each session's cache misses, the files
+    read in many sessions (a habit a line in CLAUDE.md may save), and the
+    turns begun on a large context. Misses, files and turns only of the
+    sessions the daemon keeps, as the costliest turns are; a dollar amount
+    is a share of its session's total."""
+    month = local_day(now)[:8]
+
+    def this_month(moment: float) -> bool:
+        return bool(moment) and local_day(moment).startswith(month)
+
+    models: dict[str, dict[str, Any]] = {}
+    for status in statuses.values():
+        spent = month_spent(now, status.days)
+        if spent > 0:
+            held = models.setdefault(status.model or status.model_id or "unknown",
+                                     {"model": status.model or status.model_id or "unknown",
+                                      "usd": 0.0, "sessions": 0})
+            held["usd"] += spent
+            held["sessions"] += 1
+    misses, files, large = [], {}, []
+    for session_id, held in costs.items():
+        status = statuses.get(session_id, Status())
+        total = sum(turn.weight for turn in held.turns)
+        mine = [one for one in held.misses if this_month(one.ts)]
+        if mine:
+            misses.append({"id": session_id, "name": status.name, "count": len(mine),
+                           "pauses": sum(one.pause >= PAUSE_LONG for one in mine),
+                           "models": sum(one.model for one in mine),
+                           "usd": turn_share(status.cost_usd, sum(one.weight for one in mine),
+                                             total) or 0.0})
+        for one in held.carry.results:
+            if one.key and this_month(one.ts):
+                path = one.key.rsplit(":", 2)[0]
+                file = files.setdefault(path, {"what": path, "sessions": set(), "reads": 0,
+                                               "tokens": 0, "usd": 0.0})
+                file["sessions"].add(session_id)
+                file["reads"] += 1
+                file["tokens"] += round(one.tokens)
+                file["usd"] += turn_share(status.cost_usd, held.carry.weighed(one)[0],
+                                          total) or 0.0
+        for turn in held.turns:
+            weight = old_context(turn, held.carry.least)
+            if weight and this_month(turn.ts):
+                large.append({"id": session_id, "name": status.name, "said": turn.said,
+                              "ts": turn.ts, "began": turn.began,
+                              "usd": turn_share(status.cost_usd, weight, total) or 0.0})
+    many = [{"what": one["what"], "sessions": len(one["sessions"]),
+             "tokens": round(one["tokens"] / one["reads"]), "usd": round(one["usd"], 4)}
+            for one in files.values() if len(one["sessions"]) > 1]
+    return {"models": [{**one, "usd": round(one["usd"], 4)} for one in
+                       sorted(models.values(), key=lambda one: -one["usd"])],
+            "misses": sorted(misses, key=lambda one: -one["usd"])[:COSTLY_SHOWN],
+            "files": sorted(many, key=lambda one: -one["usd"])[:COSTLY_SHOWN],
+            "large": sorted(large, key=lambda one: -one["usd"])[:COSTLY_SHOWN]}
 
 
 def month_costly_json(now: float, statuses: dict[str, Status],
@@ -11202,6 +11387,8 @@ class Daemon:
                     "kinds": month_tokens_json(now, costs),
                     # Where their time went, from the fold.
                     "time": month_time_json(now, list(self.store.sessions.values())),
+                    # What cost more than it had to, and the spend by model.
+                    "cheaper": month_cheaper_json(now, statuses, costs),
                     # The transcripts of the sessions it keeps, for the prompt.
                     "transcripts": {session_id: path for session_id in costs
                                     if (session := self.store.sessions.get(session_id))
@@ -28685,6 +28872,7 @@ function putSession(part, got) {
   putSumClock(time, got);
   putSumTime(time, got);
   putSumRuns(time, current());
+  putSumCheaper(part, got.cheaper);
 }
 
 // A bar as long as its share of the most in its list, in the column after
@@ -28780,6 +28968,7 @@ function putSpend(pane, spend, allowance) {
   putMonthTurns(cards, spend.turns || [], charts);
   putMonthCarried(cards, spend.carried, charts, spent);
   putMonthTime(pane, spend);
+  putMonthCheaper(pane, spend.cheaper);
 }
 
 // The sessions that spent the most this month (#698), as the reader asked:
@@ -28961,6 +29150,56 @@ function putMonthSlow(pane, slow) {
       showInChat();
     });
   }
+}
+
+// What cost all sessions more than it had to this month (part 4), as the
+// reader asked: the spend by model, then the session's lists for all
+// sessions, and the files read in many sessions, a habit a line in
+// CLAUDE.md may save. A session links to its own statistics, a turn to
+// itself; a session the page no longer has is named, not linked.
+function putMonthCheaper(pane, cheaper) {
+  if (!cheaper) return;
+  const lists = ["models", "misses", "files", "large"].map((key) => cheaper[key] || []);
+  if (!lists.some((one) => one.length)) return;
+  const [models, misses, files, large] = lists;
+  const cards = put(putSumPart(pane, 4, "What could be cheaper", "What each model spent,"
+                               + " and what cost more than it had to, for all sessions this"
+                               + " month."), "div", "sumcards");
+  const own = (one) => (sessionById(one.id) ? () => choose(one.id) : null);
+  const turn = (one) => (sessionById(one.id) ? () => {
+    choose(one.id);
+    state.turns.goTo = 0;
+    state.turns.goToTs = one.ts;
+    showInChat();
+  } : null);
+  putSumLines(putSumCard(cards, "spent by model"), models.map((one) => ({
+    num: cents(one.usd), weight: one.usd,
+    words: one.model + " \u00b7 " + counted(one.sessions, "session", "sessions")})));
+  putSumLines(putSumCard(cards, "cache misses"), misses.map((one) => ({
+    num: "\u2248" + cents(one.usd), weight: one.usd, who: monthName(one), open: own(one),
+    words: counted(one.count, "miss", "misses") + " \u00b7 after a pause: " + one.pauses
+      + (one.models ? " \u00b7 after a change of model: " + one.models : "")})));
+  const read = putSumCard(cards, "files read in many sessions");
+  if (files.length) {
+    putSumNote(read, "", "A file most sessions read: a line in CLAUDE.md that says what it"
+               + " holds may save the read.");
+  }
+  putSumLines(read, files.map((one) => ({
+    num: "\u2248" + cents(one.usd), weight: one.usd,
+    words: one.what + " \u00b7 read in " + one.sessions + " sessions \u00b7 "
+      + roughly(one.tokens) + " tokens each"})));
+  putSumLines(putSumCard(cards, "turns begun on a large context"), large.map((one) => ({
+    num: "\u2248" + cents(one.usd), weight: one.usd, who: monthName(one), open: turn(one),
+    words: "began on " + roughly(one.began) + " tokens \u00b7 " + one.said})));
+  for (const card of cards.querySelectorAll(".sumcard")) {
+    if (!card.querySelector(".sumline")) card.remove();
+  }
+}
+
+// A session the month names: its name on the page, else the status line's.
+function monthName(one) {
+  const s = sessionById(one.id);
+  return s ? rowName(s) : one.name || one.id.slice(0, 8);
 }
 
 const ALLOWANCE_WHERE = "change it in the settings: the sliders at the end of the tab row,"
@@ -29611,6 +29850,80 @@ function putSumRuns(pane, s) {
   }
 }
 
+// What cost this session more than it had to (part 4), as the reader
+// asked: the replies that found the cache gone, the files read again while
+// a copy was in context, the turns begun on old work. A miss and a turn
+// link to their turn.
+function putSumCheaper(pane, cheaper) {
+  const misses = (cheaper && cheaper.misses) || { list: [] };
+  const again = (cheaper && cheaper.again) || [];
+  const large = (cheaper && cheaper.large) || [];
+  if (!misses.list.length && !again.length && !large.length) return;
+  const cards = put(putSumPart(pane, 4, "What could be cheaper", "What cost more than it had"
+                               + " to: a cache that had gone, a file read again, a task begun"
+                               + " on old work."), "div", "sumcards");
+  const share = (one) => (one.usd === null ? "" : "\u2248" + cents(one.usd));
+  const open = (one) => (one.seq < 0 ? null : () => {
+    state.turns.goTo = one.seq;
+    state.turns.goToTs = one.ts;
+    showInChat();
+  });
+  if (misses.list.length) {
+    const card = putSumCard(cards, "cache misses");
+    putSumNote(card, "All of them: " + (misses.usd === null ? "" : "\u2248" + cents(misses.usd)
+               + ", ") + Math.round(100 * misses.share) + "% of what this session spent.",
+               "A reply that wrote its context to the cache again, though the reply before had"
+               + " cached it: the cache had gone, after a pause or a change of model. Each line:"
+               + " what writing it again cost over reading it.");
+    putSumLines(card, misses.list.map((one) => ({
+      num: share(one), weight: one.weight, open: open(one),
+      words: "turn " + (one.turn + 1) + " \u00b7 " + roughly(one.tokens)
+        + " tokens written again" + (missWhy(one) ? " \u00b7 " + missWhy(one) : "")})));
+  }
+  if (again.length) {
+    const card = putSumCard(cards, "files read again while still in context");
+    putSumNote(card, "", "The file was in context already: the second read added it again,"
+               + " and every later reply read it twice. Each line: what the copies cost.");
+    putSumLines(card, again.map((one) => ({
+      num: share(one), weight: one.weight,
+      words: one.what + " \u00b7 read " + one.times + " times \u00b7 " + roughly(one.tokens)
+        + " tokens each"})));
+  }
+  if (large.length) {
+    const card = putSumCard(cards, "turns begun on a large context");
+    putSumNote(card, "", "A turn that began on the context of the turns before it. Each line:"
+               + " what that old context cost its replies. A /clear before a new task starts"
+               + " it from the start alone.");
+    putSumLines(card, large.map((one) => ({
+      num: share(one), weight: one.weight, open: open(one),
+      words: "turn " + (one.turn + 1) + " \u00b7 began on " + roughly(one.began)
+        + " tokens \u00b7 " + one.said})));
+  }
+}
+
+// Why a reply found the cache gone, as far as wostuast can tell.
+function missWhy(one) {
+  if (one.model) return "after a change of model";
+  if (one.pause >= 300) return "after " + lasted(one.pause) + " idle";
+  return one.pause ? lasted(one.pause) + " after the reply before" : "";
+}
+
+// One list of part 4, a line each: its number, a bar on the list's scale,
+// a session's name, its words; a button when it opens something.
+function putSumLines(card, rows) {
+  const list = put(card, "div", "sumlist");
+  const most = Math.max(...rows.map((one) => one.weight || 0)) || 1;
+  for (const one of rows) {
+    const line = put(list, one.open ? "button" : "div", "sumline" + (one.open ? " turnlink" : ""));
+    put(line, "span", "sumnum", one.num);
+    putSumBar(line, (one.weight || 0) / most);
+    const said = put(line, "span", "sumsaid");
+    if (one.who) put(said, "span", "sumwho", one.who + " \u00b7 ");
+    said.append(one.words);
+    if (one.open) line.addEventListener("click", one.open);
+  }
+}
+
 function drawEmpty(box) {
   const empty = put(box, "div", "empty");
   put(empty, "h2", null, "No session selected");
@@ -29688,11 +30001,9 @@ function promptTokens(got) {
   return lines;
 }
 
-// A session the month names, in quotes, as a name may end in a full stop:
-// its name on the page, else the status line's.
+// A session the month names, in quotes, as a name may end in a full stop.
 function promptName(one) {
-  const s = sessionById(one.id);
-  return JSON.stringify(s ? rowName(s) : one.name || one.id.slice(0, 8));
+  return JSON.stringify(monthName(one));
 }
 
 // What the agent is asked to do with the numbers, as the reader asked:
@@ -29771,7 +30082,7 @@ function sessionPrompt(got) {
                + (one.tokens ? ", " + roughly(one.tokens) + " tokens" : "")
                + (one.what ? ": " + JSON.stringify(one.what) : "") + ".");
   }
-  return [...lines, "", ...promptAsk(false)].join(NL);
+  return [...lines, ...promptCheaper(got.cheaper), "", ...promptAsk(false)].join(NL);
 }
 
 // Time by tool and the slowest calls, as lines of a prompt; a month's call
@@ -29835,7 +30146,75 @@ function monthPrompt(spend, allowance) {
                + lasted(Math.max(...time.busy)) + " on the busiest day.",
                ...promptTime(time.tool_time || [], time.slow || []));
   }
-  return [...lines, "", ...promptAsk(true)].join(NL);
+  return [...lines, ...promptMonthCheaper(spend.cheaper), "", ...promptAsk(true)].join(NL);
+}
+
+// A session's part 4 as lines of a prompt; a heading only over a list
+// that has lines.
+function promptCheaper(cheaper) {
+  if (!cheaper) return [];
+  const share = (one) => (one.usd === null ? "" : ", \u2248" + cents(one.usd));
+  const lines = [];
+  const misses = cheaper.misses.list;
+  if (misses.length) {
+    lines.push("- Cache misses, replies that wrote the context to the cache again though the"
+               + " reply before had cached it: " + cheaper.misses.count + ", "
+               + Math.round(100 * cheaper.misses.share) + "% of what the session spent:");
+    for (const one of misses) {
+      lines.push("  - turn " + (one.turn + 1) + ": " + roughly(one.tokens) + " tokens written"
+                 + " again" + (missWhy(one) ? ", " + missWhy(one) : "") + share(one) + ".");
+    }
+  }
+  if (cheaper.again.length) {
+    lines.push("- Files read again while a copy was still in context:");
+    for (const one of cheaper.again) {
+      lines.push("  - " + one.what + ": read " + one.times + " times, " + roughly(one.tokens)
+                 + " tokens each" + share(one) + ".");
+    }
+  }
+  if (cheaper.large.length) {
+    lines.push("- Turns begun on the context of the turns before them, and what that old"
+               + " context cost their replies:");
+    for (const one of cheaper.large) {
+      lines.push("  - turn " + (one.turn + 1) + ", " + JSON.stringify(one.said) + ": began on "
+                 + roughly(one.began) + " tokens" + share(one) + ".");
+    }
+  }
+  return lines.length ? ["", "## What could be cheaper", "", ...lines] : [];
+}
+
+// The month's part 4 as lines of a prompt.
+function promptMonthCheaper(cheaper) {
+  if (!cheaper) return [];
+  const lines = [];
+  if (cheaper.models.length) {
+    lines.push("- Spent by model: " + cheaper.models.map((one) => one.model + " "
+      + cents(one.usd) + " in " + counted(one.sessions, "session", "sessions")).join("; ") + ".");
+  }
+  if (cheaper.misses.length) {
+    lines.push("- Cache misses by session:");
+    for (const one of cheaper.misses) {
+      lines.push("  - " + promptName(one) + ": " + counted(one.count, "miss", "misses") + ", "
+                 + one.pauses + " after a pause of 5 minutes or more, " + one.models
+                 + " after a change of model, \u2248" + cents(one.usd) + ".");
+    }
+  }
+  if (cheaper.files.length) {
+    lines.push("- Files read in many sessions:");
+    for (const one of cheaper.files) {
+      lines.push("  - " + one.what + ": read in " + one.sessions + " sessions, "
+                 + roughly(one.tokens) + " tokens each, \u2248" + cents(one.usd) + ".");
+    }
+  }
+  if (cheaper.large.length) {
+    lines.push("- Turns begun on the context of the turns before them, and what that old"
+               + " context cost:");
+    for (const one of cheaper.large) {
+      lines.push("  - " + promptName(one) + ": " + JSON.stringify(one.said) + ", began on "
+                 + roughly(one.began) + " tokens, \u2248" + cents(one.usd) + ".");
+    }
+  }
+  return lines.length ? ["", "## What could be cheaper", "", ...lines] : [];
 }
 
 // --- the place a session keeps, and choosing a session [topics/tab-state]

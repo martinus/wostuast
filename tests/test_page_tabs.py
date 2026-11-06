@@ -1225,6 +1225,65 @@ def test_each_view_makes_a_prompt_to_copy_or_to_put_in_the_send_box(ws, page_at)
         assert page.evaluate("document.activeElement.id") == "say"
 
 
+def test_part_4_says_what_could_be_cheaper(ws, page_at):
+    """The reader asked what wostuast can measure that an agent cannot:
+    both views end on "What could be cheaper". The session lists its cache
+    misses and why, the files read again while in context, the turns begun
+    on old work; a miss and a turn open their turn. The month adds what
+    each model spent and the files read in many sessions. Both prompts
+    carry the same."""
+    daemon, path = page_at
+    write_records(daemon, *conftest.cheap_records(base=time.time() - 3600))
+    daemon.store.refresh()
+    ws.write_status("s1", ws.Status(cost_usd=2.0, model="Opus 5.5",
+                                    days={time.strftime("%Y-%m-%d"): 2.0}))
+    mine, month = ".sumpart:not(.month)", ".sumpart.month"
+    with opened(path) as page:
+        page.set_viewport_size({"width": 2560, "height": 1440})
+        wait_for_map(page)
+        page.keyboard.press("4")
+        show_month(page)
+        page.evaluate("loadSpend()")
+        part = page.locator(f"{mine} .sumgroup", has_text="What could be cheaper")
+        card = lambda part, title: part.locator(".sumcard", has_text=title)
+        card(part, "cache misses").locator(".sumline").first.wait_for()
+        misses = card(part, "cache misses").locator(".sumline").all_inner_texts()
+        assert len(misses) == 2, misses
+        assert any("after 10min idle" in one for one in misses), misses
+        assert any("after a change of model" in one for one in misses), misses
+        again = card(part, "files read again").locator(".sumline").inner_text()
+        assert "a.c \u00b7 read 2 times" in again, again
+        assert "Now something else." in card(part, "large context").inner_text()
+        watch_landings(page)
+        card(part, "cache misses").locator(".sumline", has_text="idle").click()
+        page.wait_for_function("window.landedOn.length > 0")
+        assert "Go on." in page.evaluate("window.landedOn[0]")
+        whole = page.locator(f"{month} .sumgroup", has_text="What could be cheaper")
+        card(whole, "spent by model").locator(".sumline").wait_for()
+        assert card(whole, "spent by model").locator(".sumline").inner_text().startswith("$2.00")
+        assert "Opus 5.5 \u00b7 1 session" in card(whole, "spent by model").inner_text()
+        assert "2 misses \u00b7 after a pause: 1 \u00b7 after a change of model: 1" \
+            in card(whole, "cache misses").inner_text()
+        card(whole, "large context").locator(".sumline").first.click()
+        page.wait_for_function("window.landedOn.length > 1")
+        assert "Now something else." in page.evaluate("window.landedOn[1]")
+        assert card(whole, "many sessions").count() == 0, "no empty list"
+        # A file many sessions read: one session here, so made up.
+        page.evaluate("""() => { state.spend.cheaper.files = [
+          {what: '/w/x.md', sessions: 3, tokens: 2000, usd: 1.5}];
+          document.getElementById('content').dataset.summaryKey = ''; draw(); }""")
+        assert "/w/x.md \u00b7 read in 3 sessions" in card(whole, "many sessions").inner_text()
+        said = page.evaluate("sessionPrompt(state.summary)")
+        for part in ("## What could be cheaper", "Cache misses", "after 10min idle",
+                     "Files read again", "Now something else."):
+            assert part in said, (part, said)
+        said = page.evaluate("monthPrompt(state.spend, 0)")
+        for part in ("Spent by model: Opus 5.5 $2.00 in 1 session",
+                     "Cache misses by session", "/w/x.md: read in 3 sessions",
+                     "Turns begun on the context"):
+            assert part in said, (part, said)
+
+
 def show_month(page):
     """All sessions this month, beside the session or under it."""
     page.wait_for_selector(".sumpart.month")

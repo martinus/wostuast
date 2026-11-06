@@ -229,6 +229,35 @@ can optimize my future sessions to produce less churn".
   and **a turn's tokens go on the line's hover**, as the reader chose:
   after the prompt, a long one cut them off.
   `test_the_costliest_turns_and_the_slowest_calls_have_bars`.
+- **Both views end on part 4, "What could be cheaper"** (`putSumCheaper`,
+  `putMonthCheaper`, `cheaper_json`, `month_cheaper_json`, `putSumLines`),
+  as the reader asked, for what wostuast can measure and an agent cannot.
+  The month has the spend by model there too, as the reader chose.
+  - **A cache miss is a reply that writes `MISS_SHARE` of its context to
+    the cache, or more, though the reply before had cached it**
+    (`Costs.note_miss`, `CacheMiss`): the cache had gone. **Its cost is
+    what was cached already, written again over read** (1.25 against 0.1).
+    Why, as far as wostuast can tell: a change of model (`message.model`),
+    else a pause of `PAUSE_LONG` or more, the cache's default life. **A
+    context that fell (`CONTEXT_FELL`) is new**, after a compaction or a
+    /clear, and no miss; nor is the session's first reply.
+  - **A file read again is a `Read` of the same file and lines while a copy
+    is in context** (`read_key`, `ResultCost.key`, `again`,
+    `Carry.live_keys`, emptied at `forget`): the second copy adds nothing,
+    and every later reply reads it. Its cost is what the copies cost.
+  - **A turn begun on a large context began on twice the start or more**
+    (`TurnCost.began`, `old_context`): its cost is the old part, past the
+    start, at what a token of each of its replies cost to read. A /clear
+    before a new task starts it from the start alone.
+  - **The month's lists are of the sessions the daemon keeps**, as the
+    costliest turns are; **the files are those read in more than one
+    session**, by path, whatever the lines: a habit a line in CLAUDE.md may
+    save. **The spend by model is the status lines'** (`Status.model`,
+    else `model_id`), each session under the model it names last.
+  - **Both prompts carry part 4** (`promptCheaper`, `promptMonthCheaper`).
+  `test_what_could_be_cheaper_in_a_session`,
+  `test_the_month_says_what_could_be_cheaper_for_all_sessions`,
+  `test_part_4_says_what_could_be_cheaper`.
 - **Each view makes a prompt from its numbers** (`putViewHead`,
   `sessionPrompt`, `monthPrompt`, `promptAsk`), as the reader asked: for
   an agent to find what cuts the cost without losing much quality. Its

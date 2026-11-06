@@ -456,9 +456,25 @@ each other in their own column. Each part answers one question:
    in context.
 3. **Where the time went.** How long the turns ran, what the tools took,
    and the slowest calls.
+4. **What could be cheaper.** What cost more than it had to: replies that
+   found the cache gone, files read again while a copy was in context,
+   and turns begun on old work. The month adds what each model spent.
 
 Point at the title of a list to read how it is counted. Every amount shows
 its cents, so the amounts line up.
+
+In part 4, **cache misses** are replies that wrote the context to the cache
+again, though the reply before had cached it. A line says what writing it
+again cost over reading it, and why, as far as wostuast can tell: a pause
+longer than the cache lives, five minutes by default, or a change of model.
+**Files read again** are reads of a file, the same lines, while a copy was
+still in context: every later reply reads both copies. **Turns begun on a
+large context** began on the turns before them; a `/clear` before a new
+task starts it from the start alone. Click a miss or a turn to read it in
+the transcript beside the tab. The month lists the same for all sessions
+that wostuast keeps, what each model spent, and the files read in more than
+one session: a line in `CLAUDE.md` that says what such a file holds may save
+the read.
 
 Each view has two buttons beside its title. **copy prompt** puts its
 numbers on the clipboard as a prompt for an agent, to paste where you
