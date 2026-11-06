@@ -1392,8 +1392,8 @@ def test_a_row_says_its_name_where_it_is_its_branch_and_when(rows_at):
         # a hover says where each one is.
         assert (named["repo"], named["tree"]) == ("agent", "richpalm")
         assert (fresh["repo"], fresh["tree"]) == ("agent", "bluefox")
-        assert named["repoTitle"] == "https://example.com/team/agent.git"
-        assert fresh["repoTitle"] == "no remote"
+        assert named["repoTitle"] == "https://example.com/team/agent.git\nclick to copy"
+        assert fresh["repoTitle"] == "no remote\nclick to copy its name"
         # The hover says the path, and that a click copies it (#715).
         assert named["treeTitle"] == f'{places["named"]}\nclick to copy'
         assert named["branch"] == LONG_BRANCH     # the ellipsis is drawn
@@ -1974,6 +1974,28 @@ def test_a_rows_worktree_copies_its_whole_path(pair_at):
         }""", f'#rows .row[data-id="{other["id"]}"] .worktree')
         part.locator("a").click()
         assert page.evaluate("window.copied") == [other["worktree_path"]], "the link copied"
+
+
+def test_a_rows_repository_and_branch_copy_too(rows_at):
+    """The reader asked for the worktree's copy on the repository and the
+    branch (#725): the repository copies its remote, which its hover shows,
+    or its name when it has none, and its hover still says "no remote";
+    the branch copies its name."""
+    with open_rows(rows_at) as page:
+        page.evaluate("""() => { window.copied = [];
+          copyToClipboard = async (text) => { window.copied.push(text); return true; }; }""")
+        row = lambda sid, part: page.locator(f'#rows .row[data-id="{sid}"] .{part}')
+        named = page.evaluate("state.sessions.find((s) => s.id === 'named')")
+        fresh = page.evaluate("state.sessions.find((s) => s.id === 'fresh')")
+        for sid, part, want in (("named", "repo", named["remote"]),
+                                ("fresh", "repo", fresh["repo"]),
+                                ("named", "branch", named["branch"])):
+            before = len(page.evaluate("window.copied"))
+            row(sid, part).click()
+            page.wait_for_function("(n) => window.copied.length === n", arg=before + 1)
+            assert page.evaluate("window.copied.at(-1)") == want, (sid, part)
+        assert row("fresh", "repo").get_attribute("title") == "no remote\nclick to copy its name"
+        assert row("named", "branch").get_attribute("title") == named["branch"] + "\nclick to copy"
 
 
 def test_the_row_offers_unread_on_a_read_row_only(ws, pair_at):
@@ -3052,7 +3074,7 @@ def test_a_row_links_to_its_pull_request_after_the_branch(ws, page_at, monkeypat
         # After the branch, on its line.
         assert page.evaluate("""() => {
           const line = document.querySelector('.row[data-id="s1"] .line2:not(.where)');
-          return [...line.children].map((one) => one.className);
+          return [...line.children].map((one) => one.classList[0]);
         }""")[:2] == ["branch", "prlink"]
         # The page checks the address too: a `javascript:` one is no link.
         page.evaluate("""() => patchSession("s1", {pr: {number: 12, repo: "",
