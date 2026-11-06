@@ -784,11 +784,11 @@ def test_the_transcript_stands_beside_the_review_and_follows_the_agent(page_at):
                   send: document.getElementById('sendbar').parentNode.id,
                   sendShown: !document.getElementById('sendbar').hidden,
                   folded: document.body.classList.contains('foldsessions'),
-                  pressed: document.getElementById('chatbtn').getAttribute('aria-pressed')};
+                  open: document.getElementById('chatfold').getAttribute('aria-expanded')};
         }""")
         assert place["chatLeft"] >= place["contentRight"] - 1, place
         assert place["send"] == "chat" and place["sendShown"], place
-        assert not place["folded"] and place["pressed"] == "true", place
+        assert not place["folded"] and place["open"] == "true", place
         # A push lands in the column, as it lands in the tab.
         write_records(daemon, conftest.record(
             "claude", "A reply beside the diff.", ts="2026-09-18T15:00:00.000Z"))
@@ -800,11 +800,11 @@ def test_the_transcript_stands_beside_the_review_and_follows_the_agent(page_at):
         # by a reload here: what the page ran before one may not count for
         # the page's coverage (topics/testing).
         assert page.evaluate("localStorage.getItem('wostuast-chat')") == "1"
-        # `t` puts it away and unfolds the list it folded.
+        # `t` folds it to its strip (#712) and unfolds the list it folded.
         page.keyboard.press("t")
         page.wait_for_function("!document.body.classList.contains('sidechat')")
         gone = page.evaluate("""() => ({
-          chat: document.getElementById('chat').hidden,
+          chat: document.body.classList.contains('chatstrip'),
           send: document.getElementById('sendbar').parentNode.className,
           folded: document.body.classList.contains('foldsessions'),
           kept: localStorage.getItem('wostuast-chat')})""")
@@ -848,6 +848,55 @@ def test_the_transcript_is_never_beside_itself(page_at):
         show_tab(page, "transcript")
         page.wait_for_function("!document.body.classList.contains('sidechat')")
         assert page.evaluate("document.getElementById('sendbar').parentNode.className") == "main"
+        # Nor its strip, folded (#712).
+        assert not page.evaluate("document.body.classList.contains('chatstrip')")
+        assert page.locator("#chat").is_hidden()
+
+
+def test_the_transcript_column_folds_as_the_lists_do(repo_page):
+    """The reader asked for one way to put a column away (#712): the
+    transcript beside Files and Review folds to a strip, as the session
+    list and the file list do, and starts folded. Its button stands at the
+    column's right edge, open or folded, so a second press finds it (#492);
+    the button in the bar and the cross went, and with them a button that
+    never looked pressed (#710). Open beside a folded file list, the list is
+    a strip too: the grid's own columns kept its open width (#709)."""
+    at = """() => { const r = document.getElementById('chatfold').getBoundingClientRect();
+                    return [Math.round(r.right), Math.round(r.top)]; }"""
+    with opened(repo_page) as page:
+        show_tab(page, "diff")
+        page.wait_for_selector("#chatfold")
+        strip = page.evaluate("""() => ({
+          strip: document.body.classList.contains('chatstrip'),
+          open: document.body.classList.contains('sidechat'),
+          wide: Math.round(document.getElementById('chat').getBoundingClientRect().width),
+          edge: Math.round(innerWidth - document.getElementById('chat')
+                           .getBoundingClientRect().right),
+          word: document.querySelector('#chat .chatword').textContent,
+          expanded: document.getElementById('chatfold').getAttribute('aria-expanded'),
+          inBars: document.querySelectorAll('.diffbar .theme:not(.fold), #chatbtn').length})""")
+        assert strip == {"strip": True, "open": False, "wide": 34, "edge": 0,
+                         "word": "Transcript", "expanded": "false", "inBars": 0}, strip
+        shut = page.evaluate(at)
+        page.click("#chatfold")
+        page.wait_for_function("document.body.classList.contains('sidechat')")
+        assert page.get_attribute("#chatfold", "aria-expanded") == "true"
+        assert page.evaluate(at) == shut, "the button moved when the column opened"
+        page.click("#chatfold")
+        page.wait_for_function("document.body.classList.contains('chatstrip')")
+        assert page.evaluate(at) == shut, "the button moved when the column folded"
+        # The word opens it too; then the list folds beside it.
+        page.click("#chat .chatword")
+        page.wait_for_function("document.body.classList.contains('sidechat')")
+        page.click(".content .side .fold")
+        page.wait_for_function("document.body.classList.contains('foldlist')")
+        widths = page.evaluate("""() => {
+          const at = (sel) => document.querySelector(sel).getBoundingClientRect();
+          return {list: Math.round(at('.content .side').width),
+                  gap: Math.round(at('.diffbar').left - at('.content .side').right)};
+        }""")
+        assert widths["list"] == 34 and widths["gap"] < 12, widths
+        page.click(".content .side .fold")
 
 
 def test_the_transcript_column_s_head_lines_up_with_the_bars_beside_it(repo_page):

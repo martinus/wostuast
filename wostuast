@@ -15717,10 +15717,6 @@ body {
 .foldsessions .sidebar .findslot > :not(.fold),
 .foldlist .content.split > .side > :not(.findslot),
 .foldlist .content.split > .side > .findslot > :not(.fold) { display: none; }
-/* Folded, the list column keeps the folder picker's height and hides it
-   (issue 702): a fold button that moved up by it was not under the pointer
-   any more (issue 492). After the rule that hides the rest of the column. */
-.foldlist .content.split > .side > .placeslot { display: flex; visibility: hidden; }
 /* Folded, the head holds the settings alone, in the middle of the strip
    (issue 702): the logo says nothing the strip needs, and the settings
    must stay in reach. */
@@ -15783,9 +15779,7 @@ body {
   content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
   border-radius: 50%; background: var(--done);
 }
-.foldlist .main {
-  grid-template-columns: var(--fold-w) var(--split-grip-w) minmax(0, 1fr);
-}
+.foldlist .main { --list-col: var(--fold-w); }
 .foldlist .content.split > .side { width: var(--fold-w); }
 body.dragging { cursor: col-resize; user-select: none; }
 body.dragging.rowdrag { cursor: row-resize; }
@@ -16275,7 +16269,11 @@ body.switching #content::after {
    nought tall. */
 .main {
   flex-grow: 1; min-width: 0; display: grid;
-  grid-template-columns: var(--side-w, 268px) var(--split-grip-w) minmax(0, 1fr);
+  /* The list column's width, the one place it is said: folded, it is the
+     strip's (issue 709). Beside the transcript the grid had its own
+     columns, with the open width, and a folded list left that much empty. */
+  --list-col: var(--side-w, 268px);
+  grid-template-columns: var(--list-col) var(--split-grip-w) minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto auto;
 }
 .main > .tabs, .main > .content { grid-column: 1 / -1; }
@@ -16286,16 +16284,17 @@ body.switching #content::after {
    send box went to the box under it. */
 .main > .asking { grid-row: 3; grid-column: 3; position: relative; }
 /* Which repository the Files and Review tabs show (issue 616): the commit
-   picker's look (`.pickof`). At the top of the list column (issue 702),
-   over the list it chooses, not in the tab row, where it stood among the
-   session's tabs and the page's settings. Last in the column's DOM and
-   first by `order`, so `split`'s parts keep their places. While no list
-   column shows it, it waits in `#placehome`, as the find box does. */
+   picker's look (`.pickof`). In the list column (issue 702), under the find
+   box (issue 711): over it, it put the list's fold button a line under the
+   session list's. Last in the column's DOM and second by `order`, so
+   `split`'s parts keep their places. While no list column shows it, it
+   waits in `#placehome`, as the find box does. */
 .placehome { display: none; }
 .side > .placeslot {
-  order: -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-  padding: 8px 10px 0;
+  order: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 0 10px 8px;
 }
+.side > :is(.listnote, .filelist, .sidefoot) { order: 2; }
 .placeslot:not(:has(> :not([hidden]))) { display: none; }
 .placeslot .pickplace { flex: 1 1 0; min-width: 0; }
 /* A subagent's own transcript (issue 618): a bar, then its turns, read
@@ -16430,31 +16429,59 @@ button.sumline:not(:disabled):hover { background: var(--raised); }
 /* The transcript beside the Files or Review tab (issue 625): a fourth
    column, with the question bar and the send box under it, as the reader
    chose from pictures (on the right; on the left it parted the file list
-   from its session). Off until asked for (`t`, `#chatbtn`). The tab keeps
+   from its session). Folded to a strip until opened (`t`, `#chatfold`,
+   issue 712). The tab keeps
    its three columns: `.content` spans them, and `.split`'s subgrid with
    it. */
 .chat { display: none; }
 body.sidechat .main {
-  grid-template-columns: var(--side-w, 268px) var(--split-grip-w) minmax(0, 1fr)
+  grid-template-columns: var(--list-col) var(--split-grip-w) minmax(0, 1fr)
                          var(--chat-w, minmax(340px, 38%));
 }
+/* Folded, the column is a strip as wide as its button (issue 712), as the
+   session list and the file list are. */
+body.chatstrip .main {
+  grid-template-columns: var(--list-col) var(--split-grip-w) minmax(0, 1fr) var(--fold-w);
+}
+/* The tab row's controls end where the bars under them end, on one line
+   (`--line-end`, topics/settings), so not over the strip: it is a column
+   of its own (issue 712). */
+body.chatstrip .tabs { padding-right: calc(var(--fold-w) + var(--line-end)); }
 /* Its edge drags its width (issue 641), over the column's border. */
 .chat > .chatgrip {
   position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; z-index: 4;
   background: transparent;
 }
 .chat > .chatgrip:hover, .chat > .chatgrip.dragging { background: var(--needs); }
-body.sidechat .main > .content { grid-column: 1 / 4; }
-body.sidechat .main > .chat {
+:is(body.sidechat, body.chatstrip) .main > .content { grid-column: 1 / 4; }
+:is(body.sidechat, body.chatstrip) .main > .chat {
   display: flex; flex-direction: column; grid-column: 4; grid-row: 2 / -1; min-height: 0;
   position: relative; border-left: 1px solid var(--edge-bright); background: var(--bg);
+}
+/* The column folds as the session list and the file list do (issue 712):
+   its button stands `--fold-in` from the column's outer edge, the right,
+   open or folded, so a second press finds it under the pointer (issue
+   492). It points the way the column goes. Folded, the head keeps the
+   button alone, and the word stands under it, read downwards. */
+.chat > .chathead > .fold {
+  margin: 0 var(--fold-in) 0 auto; border-color: transparent; background: none;
+}
+.chat > .chathead > .fold:hover { border-color: var(--edge-bright); }
+.chat > .chathead > .fold .icon { transform: scaleX(-1); width: 17px; height: 17px; }
+/* The rule goes, not its pixel: without it the head was a pixel shorter,
+   and the button a pixel off where it stood open (issue 492). */
+body.chatstrip .chat > .chathead { padding: 6px 0; border-bottom-color: transparent; }
+body.chatstrip .chat > .chathead > b { display: none; }
+.chat > .chatword {
+  align-self: center; writing-mode: vertical-rl; margin-top: 4px;
+  font: 12px var(--sans); color: var(--ink-mute); cursor: pointer;
 }
 /* The question bar and the send box stand under the transcript, in its
    column (`paintChat` moves them in): left in `.main`'s rows, they kept an
    empty strip under the tab's pane. */
 .chat > :is(.asking, .sendbar) { position: relative; flex-shrink: 0; }
 .chat > .chathead {
-  display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 16px;
+  display: flex; align-items: center; gap: 8px; padding: 6px 0 6px 16px;
   box-sizing: border-box; flex-shrink: 0;
   border-bottom: 1px solid var(--edge); font: 12px var(--sans); color: var(--ink-mute);
 }
@@ -17457,11 +17484,6 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   background: var(--chosen); color: var(--ink-bright); border-color: var(--edge-bright);
 }
 .filebody .where .quick ~ .readas { margin-left: 0; }
-/* The transcript beside this tab (issue 702), at the right of its bar,
-   first of the buttons that change how the tab looks: md / txt stays the
-   last, where the reader reads a document's line to its end. */
-.chatbtn { margin-left: auto; flex-shrink: 0; }
-.chatbtn ~ .quick, .filebody .where .chatbtn ~ .readas { margin-left: 0; }
 /* Older, which of how many, newer: one control (`putDiffBar`). The count
    is a part of it with the parts' edge and height, and no button. */
 .stepper { flex-shrink: 0; }
@@ -18372,10 +18394,6 @@ const ICONS = {
             + "M8.4 7.4l1.4 1.4 1.4-1.4",
   plain: "M2 3.4h10M2 6h10M2 8.6h10M2 11.2h6",
   twoColumns: "M1.8 2.2h10.4v9.6H1.8zM7 2.2v9.6",
-  // The transcript beside the tab (issue 702): a page with a narrow column
-  // of lines at its right. In the Review bar it stands beside `twoColumns`,
-  // the diff's two sides, and the two looked like one button twice.
-  sideTranscript: "M1.8 2.2h10.4v9.6H1.8zM8.4 2.2v9.6M9.6 4.6h1.4M9.6 6.6h1.4M9.6 8.6h1.4",
   // The repository and the branch on a sidebar row: a book, as git hosts
   // draw a repository, and the fork of a branch leaving its line.
   repo: "M3 2.8a1 1 0 0 1 1-1h7v9.4H4a1 1 0 0 0-1 1zM3 11.2a1 1 0 0 0 1 1h7v-1",
@@ -24870,7 +24888,6 @@ function putAbout(where, windowed) {
 function putFileHead(pane, windowed, asCode, isDoc) {
   const where = putWhere(pane, state.files.path);
   putAbout(where, windowed);
-  putChatButton(where);
   if (asCode) putQuick(where, ["spacemarks", "codewidth", "wrapping"]);
   if (isDoc) putAsText(where);
 }
@@ -25306,7 +25323,6 @@ function putDiffBar(pane) {
   // is 1: stepping through a review, "5 / 9" says how far there is to go.
   put(stepper, "span", "stepat");
   step("chevron", "newer: the commit after this one", -1);
-  putChatButton(bar);
   putQuick(bar, ["sides", "spacechanges", "codewidth"]);
   const scroll = put(pane, "div", "diffscroll");
   // Which file is under the top of the pane, marked in the tree, the way a
@@ -27747,10 +27763,8 @@ function draw() {
 // The tab's own landing, after `paint`: each tab says in `TABS` what it
 // goes to and when.
 function land() {
-  if (chatShown()) {
-    landTranscript($("chat"));
-    fitChatHead();
-  }
+  if (chatShown()) landTranscript($("chat"));
+  if (chatBeside()) fitChatHead();
   const box = $("content");
   if (state.feed || !current() || box.dataset.tab !== state.tab) return;
   TABS[state.tab].land(box);
@@ -27806,8 +27820,12 @@ function showTab(name) {
 // `localStorage`. Never over a view, and never beside the transcript.
 function chatWanted() { return stored("wostuast-chat") === "1"; }
 
-function chatShown() {
-  return chatWanted() && !!current() && !state.feed && state.tab !== "transcript";
+function chatShown() { return chatWanted() && chatBeside(); }
+
+// Whether the column stands beside this tab, open or folded to its strip
+// (issue 712): beside every tab of a session but its own, never over a view.
+function chatBeside() {
+  return !!current() && !state.feed && state.tab !== "transcript";
 }
 
 // Whether the transcript is on screen: its own tab, or the column.
@@ -27829,36 +27847,28 @@ function turnsHost() { return chatShown() ? $("chat") : $("content"); }
 function toggleChat() {
   const on = !chatWanted();
   store("wostuast-chat", on ? "1" : "");
-  paintChatButton();
   if (on && state.tab === "transcript") { showTab("diff"); return; }
   drawHeader();
   draw();
   if (chatShown() && !state.turns.whole) loadTranscript();
 }
 
-// The button for the transcript beside the tab, at the right end of the
-// Files or Review tab's bar (issue 702): it changes how the tab is laid
-// out, as the buttons beside it change how it is drawn. In the tab row it
-// stood among the session's tabs, and nobody could tell what it was for.
-// Built with each bar, so there is one at most; `t` works from anywhere.
-function putChatButton(bar) {
-  const button = put(bar, "button", "theme chatbtn");
-  button.type = "button";
-  button.id = "chatbtn";
-  button.addEventListener("click", toggleChat);
-  paintChatButton();
-}
-
-function paintChatButton() {
-  const button = $("chatbtn");
-  if (!button) return;
-  const on = chatWanted();
-  button.replaceChildren();
-  putIcon(button, "sideTranscript");
-  button.title = (on ? "put the transcript away" : "the transcript beside this tab")
-    + "  \u00b7  t";
-  button.setAttribute("aria-label", button.title);
-  button.setAttribute("aria-pressed", String(on));
+// The column's fold button (issue 712), as the session list's and the file
+// list's: the reader asked for one way to put a column away. A button in
+// the tab's bar and a cross in the column's head did it before, and the
+// button never looked pressed (issue 710). Built with the head, which is
+// built again when the column folds or opens, so it says the state it is
+// built in.
+function putChatFold(head, open) {
+  const fold = put(head, "button", "theme fold");
+  fold.type = "button";
+  fold.id = "chatfold";
+  putIcon(fold, open ? "foldIn" : "foldOut");
+  fold.title = (open ? "fold away the transcript" : "show the transcript") + "  \u00b7  t";
+  fold.setAttribute("aria-label", fold.title);
+  fold.setAttribute("aria-expanded", String(open));
+  fold.addEventListener("click", toggleChat);
+  return fold;
 }
 
 //: The narrowest the transcript column is dragged to, and what it leaves
@@ -27871,12 +27881,19 @@ const CHAT_LEAVES = 600;
 // pushes patch it (`patchTranscript`), as they patch the tab's.
 function paintChat() {
   const chat = $("chat");
-  const on = chatShown();
+  const beside = chatBeside();
+  const on = beside && chatWanted();
   document.body.classList.toggle("sidechat", on);
-  chat.hidden = !on;
+  document.body.classList.toggle("chatstrip", beside && !on);
+  chat.hidden = !beside;
   if (!on) {
     carryBars($("reviewbar").parentNode, $("reviewbar"));
-    if (chat.dataset.tab) { chat.replaceChildren(); chat.dataset.tab = ""; }
+    const want = beside ? "strip" : "";
+    if (chat.dataset.tab !== want) {
+      chat.replaceChildren();
+      chat.dataset.tab = want;
+      if (beside) putChatStrip(chat);
+    }
     return;
   }
   if (chat.dataset.tab !== "transcript") {
@@ -27884,11 +27901,7 @@ function paintChat() {
     chat.dataset.tab = "transcript";
     const head = put(chat, "div", "chathead");
     put(head, "b", null, "Transcript");
-    const shut = put(head, "button", "theme");
-    putIcon(shut, "close");
-    shut.title = "put the transcript away  \u00b7  t";
-    shut.setAttribute("aria-label", shut.title);
-    shut.addEventListener("click", toggleChat);
+    putChatFold(head, true);
     put(chat, "div", "turnbody");
     putToFoot(chat);
     // Its left edge drags its width, as the session column's does (#641);
@@ -27904,6 +27917,15 @@ function paintChat() {
   pane.drawnBlocks = state.turns.blocks;
   pane.drawnSession = state.chosen;
   fillTurns(pane, chat.querySelector(":scope > .tofoot"));
+}
+
+// The column folded (issue 712): its head with the button alone, where the
+// open column's stands, and the word under it, which opens it too.
+function putChatStrip(chat) {
+  putChatFold(put(chat, "div", "chathead"), false);
+  const word = put(chat, "div", "chatword", "Transcript");
+  word.title = "show the transcript  \u00b7  t";
+  word.addEventListener("click", toggleChat);
 }
 
 // The column's head ends where the bar of the tab beside it ends (#625):
@@ -29656,7 +29678,6 @@ $("placepath").addEventListener("keydown", (key) => {
   key.stopPropagation();
   $("placeadd").hidden = true;
 });
-paintChatButton();
 $("settings").addEventListener("click", (press) => {
   press.stopPropagation();            // or the listener below shuts it again
   showSettings($("setpop").hidden);

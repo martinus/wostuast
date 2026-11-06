@@ -2118,51 +2118,37 @@ def test_a_folder_added_from_the_picker_is_read_on_the_files_tab(
         page.wait_for_selector(".dfile .addnote", state="attached")
 
 
-def test_the_folder_picker_heads_the_list_and_the_transcript_button_ends_the_bar(
-        repo_page):
-    """The tab row held the session's tabs, the transcript beside them,
-    the folder picker, jump and the page's settings, and a newcomer could
-    not tell what each acts on (#702). The reader chose each in the bar of
-    what it acts on: the folder picker heads the list column of the Files
-    and Review tabs, over the find box, and waits at home on any other
-    tab; the transcript beside is a button in the Files and Review bars,
-    before the buttons that change how the tab is drawn."""
+def test_the_folder_picker_stands_under_the_find_box(repo_page):
+    """The reader chose the folder picker in the list column of the Files
+    and Review tabs (#702), and then the list's fold button on the line of
+    the session list's (#711): so the picker stands under the find box. It
+    waits at home on any other tab, and works again when it comes back."""
     where = """(id) => {
       const one = document.getElementById(id);
       return one ? (one.closest('#placehome') ? 'home' : one.closest('.tabs') ? 'tabs'
-                    : one.closest('.content .side') ? 'list'
-                    : one.closest('.diffbar') ? 'diffbar'
-                    : one.closest('.filebody > .where') ? 'fileline' : 'elsewhere')
+                    : one.closest('.content .side') ? 'list' : 'elsewhere')
                  : 'none'; }"""
     with opened(repo_page) as page:
-        show_tab(page, "files")
-        page.locator(".filelist.files button", has_text="README.md").first.click()
-        page.wait_for_selector(".filebody > .where #chatbtn")
-        page.wait_for_function("document.getElementById('placepick').options.length === 2")
-        assert page.evaluate(where, "placepick") == "list"
-        assert page.evaluate("""() => document.getElementById('placepick')
-          .getBoundingClientRect().bottom
-          <= document.querySelector('.side .findslot').getBoundingClientRect().top""")
-        show_tab(page, "diff")
-        page.wait_for_selector(".diffbar #chatbtn")
-        assert page.evaluate(where, "placepick") == "list"
-        assert page.evaluate("""() => document.getElementById('chatbtn')
-          .getBoundingClientRect().right
-          <= document.querySelector('.diffbar .quick').getBoundingClientRect().left""")
-        page.click("#chatbtn")
-        page.wait_for_function("document.body.classList.contains('sidechat')")
-        assert page.get_attribute("#chatbtn", "aria-pressed") == "true"
-        page.click("#chatbtn")
-        page.wait_for_function("!document.body.classList.contains('sidechat')")
+        for tab in ("files", "diff"):
+            show_tab(page, tab)
+            page.wait_for_function(
+                "document.getElementById('placepick').options.length === 2")
+            assert page.evaluate(where, "placepick") == "list"
+            lines = page.evaluate("""() => {
+              const at = (sel) => document.querySelector(sel).getBoundingClientRect();
+              return {fold: at('.content .side .fold').top, own: at('#sessionfold').top,
+                      find: at('.content .side .findslot').bottom,
+                      pick: at('#placepick').top};
+            }""")
+            assert abs(lines["fold"] - lines["own"]) < 1, (tab, lines)
+            assert lines["pick"] >= lines["find"], (tab, lines)
         show_tab(page, "transcript")
         assert page.evaluate(where, "placepick") == "home"
-        assert page.evaluate(where, "chatbtn") == "none"
         # Back, it still works: its listeners went home with it.
         show_tab(page, "files")
         page.select_option("#placepick", "+")
         assert page.evaluate(where, "placepath") == "list"
         assert page.locator("#placepath").is_visible()
-
 
 def test_another_repository_keeps_its_answers_and_its_names_to_itself(
         ws, served, repo_page, tmp_path):

@@ -262,7 +262,9 @@ for each session, as tall as a row, with the name turned on its side and in
 the colour of its state. Click a tab to open that session, and point at it
 to see its whole row, opened out in its place. The list beside a tab (the map,
 the files, the changed files) is one column for the first three tabs, so it
-folds on all three. The browser remembers what you folded. Press <kbd>f</kbd> or
+folds on all three. The transcript beside the Files and Review tabs folds
+the same way, at the right, and starts folded. The browser remembers what
+you folded. Press <kbd>f</kbd> or
 <kbd>/</kbd> to bring back the column you type into.
 
 <details>
@@ -342,12 +344,13 @@ reply to show a copy button at the block's own top right. It copies the
 block and nothing else.
 
 To read the transcript while you read files or a review, press <kbd>t</kbd>
-or click the two-column button at the right of the tab's bar. The transcript then stands
-in a column on the right of the Files and Review tabs, with the question bar
+or click the fold button of the thin strip at the right of the Files and
+Review tabs. The transcript then stands in a column there, with the question bar
 and the send box under it, and it follows the agent as the Transcript tab
 does. Drag its left edge to make it wider or narrower, and double-click
-the edge to go back to the width it started with. Press <kbd>t</kbd> again
-to put it away; your browser remembers the choice and the width.
+the edge to go back to the width it started with. Press <kbd>t</kbd> or its
+fold button again to fold it back to the strip; your browser remembers the
+choice and the width.
 
 An edit shows how many lines it added and removed. Click it to see the change
 under it, drawn as the Review tab draws it, with the line numbers the file had at
