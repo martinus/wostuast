@@ -122,6 +122,15 @@ buffer, scrubbed, counted; a No, an interrupt, what a refusal says.
   refuses `-S`, so it pastes again without. A digit, Tab, Enter and every
   byte `tmux_send` passes go through `vis(3)` unchanged. Keys and the
   Escape leave copy mode first.
+  - **The page's stop is this Escape** (#714, `verb_interrupt`, `#stop`,
+    `stopAgent`), as the reader asked: beside send, only while the agent
+    works, so send still queues a message for a busy agent. Refused for an
+    agent at its prompt, where Escape stops nothing, and while a dialog or a
+    question is up (`cannot_type(text=True)`): there it is a No nobody
+    chose. Held as a send is (`holding`, `startSending`). The turn's end
+    comes from the transcript (#713, topics/state).
+    `test_a_stop_is_one_escape_into_a_working_agent`,
+    `test_a_stop_stands_beside_send_while_the_agent_works`.
   `test_a_tmux_that_refuses_dash_s_still_gets_one_escape`,
   `test_interrupt_sends_escape_and_never_ctrl_c`,
   `test_synchronized_panes_get_no_answer_and_no_escape_of_ours`.

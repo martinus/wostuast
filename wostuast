@@ -3207,6 +3207,22 @@ def _on_declined(session: Session, event: dict[str, Any], ts: float) -> None:
                           else "declined from the page")
 
 
+def _on_interrupted(session: Session, event: dict[str, Any], ts: float) -> None:
+    """wostuast's own record (#713): the turn was interrupted, by Escape or
+    Ctrl-C in the terminal or the page's stop. No hook says so, so the row
+    stayed green over an agent back at its prompt. The daemon writes this
+    once the transcript's last record is the interrupt (`interrupted_at`).
+    Not a turn the reader must look at: they stopped it, so no `ended_at`,
+    no unread and no alert, as for a No (`_on_declined`). An interrupt from
+    before the turn now running changes nothing: a prompt typed since
+    started another."""
+    if session.state != "working" or float(event.get("at") or 0.0) < session.turn_began:
+        return
+    session.calls.clear()
+    become(session, "done")
+    session.last_event = "interrupted"
+
+
 def _on_model_asked(session: Session, event: dict[str, Any], ts: float) -> None:
     """wostuast's own record (#626): the page typed `/model <name>` into an
     agent at its prompt with a conversation behind it, and Claude Code asks
@@ -3698,6 +3714,7 @@ _HANDLERS: dict[str, Callable[[Session, dict[str, Any], float], None]] = {
     "PostToolUseFailure": _on_tool_failed,
     "PermissionRequest": _on_permission_request,
     "Declined": _on_declined,
+    "Interrupted": _on_interrupted,
     "Approved": _on_approved,
     "ModelAsked": _on_model_asked,
     "ModelAnswered": _on_model_answered,
@@ -4316,6 +4333,30 @@ def tail_records(path: Path, needle: bytes) -> list[dict[str, Any]]:
     except OSError:
         return []
     return list(json_objects(line for line in tail.split(b"\n") if needle in line))
+
+
+def interrupted_at(path: Path) -> float:
+    """When the turn in a transcript was interrupted, or 0: the moment of
+    its last conversation record, when that is Claude Code's own
+    `[Request interrupted by user]` (#713). Measured on 2.1.318 with
+    `tests/claude_pane.py`: Escape or Ctrl-C during a call fires no hook,
+    no `PostToolUseFailure` and no `Stop`, and the transcript gets the
+    call's result "User rejected tool use" and that record. Records of
+    Claude Code's own book-keeping follow it (`last-prompt`, `mode`), so
+    only a `user` or `assistant` record counts as the last."""
+    for record in reversed(tail_records(path, b'"timestamp"')):
+        kind = record.get("type")
+        if kind not in ("user", "assistant"):
+            continue
+        message = record.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        said = [content] if isinstance(content, str) else [
+            str(part.get("text") or "") for part in content or []
+            if isinstance(part, dict) and part.get("type") == "text"]
+        if kind == "user" and any(INTERRUPTED.fullmatch(one.strip()) for one in said):
+            return parse_timestamp(record.get("timestamp"))
+        return 0.0
+    return 0.0
 
 
 #: What Claude Code adds to its first few recaps, for its own terminal: no
@@ -10854,10 +10895,10 @@ class Daemon:
         #: The run of a reader `forget_gone` dropped, by session, so the next
         #: reader of that session counts on from it. An int each, not blocks.
         self.runs: dict[str, int] = {}
-        #: Sessions a decline is being pressed into. It waits up to
-        #: `DECLINE_WAIT` between its Escape and its reason, and a second one
-        #: -- another tab -- would press a second Escape into what came next.
-        self.declining: set[str] = set()
+        #: The size and moment of each working session's transcript when
+        #: `interrupted_in_terminal` last read its end (#713), by session:
+        #: read again only when it changed.
+        self.interrupt_looked: dict[str, tuple[int, int]] = {}
         #: A `/model` typed whose question the tick has not folded yet, by
         #: session: its ask id and when (#626). A send in that second went
         #: into the dialog. See `MODEL_PENDING`.
@@ -10865,6 +10906,20 @@ class Daemon:
         #: The model questions already answered from the page: a second
         #: press typed another digit into the prompt.
         self.model_pressed: set[str] = set()
+        #: Two locks, for two jobs that no method needs at once (#538).
+        #: `typing_lock` guards `typing`, `typing_panes` and `declining`;
+        #: `reading` guards `transcripts` and `runs`. They were one lock, and
+        #: `read_transcript` reads the file while it holds it: the first read
+        #: of a long transcript held back every send, answer and No.
+        self.typing_lock = threading.Lock()
+        self.reading = threading.Lock()
+        self._init_claims()
+        self.stopping = threading.Event()
+        self.started = time.time()
+
+    def _init_claims(self) -> None:
+        """What `claim` holds: one thing typed into a session and its pane
+        at a time, across every browser tab and script."""
         #: Sessions something is being typed into: a send, an answer or a No
         #: (`claim`). The page's `sending` guard is per browser tab, and two
         #: tabs -- or a tab and a script -- ran two HTTP threads at once: the
@@ -10875,15 +10930,10 @@ class Daemon:
         #: and a send to each at once interleaved their pastes and Enters into
         #: one prompt, 20 times of 20 (#331). So a pane is taken as well.
         self.typing_panes: dict[str, str] = {}
-        #: Two locks, for two jobs that no method needs at once (#538).
-        #: `typing_lock` guards `typing`, `typing_panes` and `declining`;
-        #: `reading` guards `transcripts` and `runs`. They were one lock, and
-        #: `read_transcript` reads the file while it holds it: the first read
-        #: of a long transcript held back every send, answer and No.
-        self.typing_lock = threading.Lock()
-        self.reading = threading.Lock()
-        self.stopping = threading.Event()
-        self.started = time.time()
+        #: Sessions a decline is being pressed into. It waits up to
+        #: `DECLINE_WAIT` between its Escape and its reason, and a second one
+        #: -- another tab -- would press a second Escape into what came next.
+        self.declining: set[str] = set()
 
     def session(self, session_id: str) -> Session | None:
         return self.store.sessions.get(session_id)
@@ -11159,6 +11209,37 @@ class Daemon:
             wrote = True
         return wrote
 
+    def interrupted_in_terminal(self) -> bool:
+        """Write `Interrupted` for a working session whose transcript ends in
+        the interrupt (#713): no hook says so, measured on 2.1.318, and the
+        row stayed green over an agent back at its prompt. Only the end of
+        the file is read (`interrupted_at`), and only when it changed: the
+        whole reader holds every tool result, and a working session need not
+        be watched. True when one was written."""
+        wrote = False
+        for session in list(self.store.sessions.values()):
+            if session.state != "working" or session.dialog or not session.turn_began:
+                self.interrupt_looked.pop(session.session_id, None)
+                continue
+            path = safe_transcript(session.transcript_path)
+            try:
+                held = path.stat() if path else None
+            except OSError:
+                held = None
+            if held is None:
+                continue
+            stamp = (held.st_size, held.st_mtime_ns)
+            if self.interrupt_looked.get(session.session_id) == stamp:
+                continue
+            self.interrupt_looked[session.session_id] = stamp
+            at = interrupted_at(path)
+            if not at or at < session.turn_began:
+                continue
+            append_event({"session_id": session.session_id,
+                          "hook_event_name": "Interrupted", "ts": time.time(), "at": at})
+            wrote = True
+        return wrote
+
     def model_answered(self) -> bool:
         """Write `ModelAnswered` for a "Switch model?" dialog whose answer the
         transcript holds (#626). Claude Code writes the `/model` and its
@@ -11240,6 +11321,8 @@ class Daemon:
         if self.declined_in_terminal():
             moved = self.store.refresh() or moved
         if self.model_answered():
+            moved = self.store.refresh() or moved
+        if self.interrupted_in_terminal():
             moved = self.store.refresh() or moved
         if moved:
             self.hub.send(EVENT_SESSIONS, self.sessions_change())
@@ -12789,6 +12872,36 @@ def verb_decline(serving: Serving, session_id: str, session: Session,
     return answer
 
 
+def verb_interrupt(serving: Serving, session_id: str, session: Session,
+                   body: dict[str, Any]) -> Answer:
+    """Stop the agent's turn (#714), as the reader asked: a stop as
+    claude.ai has. **Escape, never Ctrl-C** (`tmux_interrupt`,
+    topics/safety-typing): Escape stops the turn and keeps the work done so
+    far; Ctrl-C at an idle prompt clears it, and a second quits Claude Code.
+
+    Only a working agent: at its prompt Escape does nothing worth a press.
+    Not while a dialog or a question is up (`cannot_type`): they have their
+    own No and answers, and an Escape there is a No nobody chose. One at a
+    time, held as a send is. The turn's end comes from the transcript, as
+    for an interrupt in the terminal (#713): no hook says it.
+    """
+    why = cannot_type(session, text=True)
+    if why:
+        return 409, {"error": why}
+    if session.state != "working":
+        return 409, {"error": "the agent is not working, so there is nothing to stop"}
+    pane = session.pane
+    with serving.daemon.holding(session_id, pane) as busy:
+        if busy:
+            return 409, {"error": busy}
+        pressed = tmux_interrupt(pane)
+    # Answered once the session is given back (#658), as a send is.
+    if not pressed:
+        return 502, {"id": session_id,
+                     "error": "tmux would not take the Escape, so nothing was stopped"}
+    return 200, {"id": session_id, "done": True}
+
+
 def verb_approve(serving: Serving, session_id: str, session: Session,
             body: dict[str, Any]) -> Answer:
     """Say Yes, once, to the permission dialog on screen -- through its
@@ -12945,6 +13058,8 @@ POST_VERBS: dict[str, tuple[Any, str, str]] = {
     "send": (verb_send, "message", "in_tmux"),
     "answer": (verb_answer, "answer", "in_tmux"),
     "decline": (verb_decline, "reason", "in_tmux"),
+    # Escape into a working agent's pane (#714).
+    "interrupt": (verb_interrupt, "request", "in_tmux"),
     # A Yes reaches no terminal: it goes to the dialog's own hook, which
     # waits for it (`approve`), so it needs no pane.
     "approve": (verb_approve, "approval", "known"),
@@ -16598,7 +16713,10 @@ body.chatstrip .chat > .chathead > b { display: none; }
    ran over the edge of the box, and broken into rows it read badly. */
 .sendside { display: flex; flex-direction: column; align-items: flex-end;
   gap: 6px; flex-shrink: 0; }
-.sendside > .verb { height: 32px; }
+/* Send, and the stop beside it while the agent works (issue 714): quiet,
+   so it is not taken for send. */
+.sendgo { display: flex; gap: 6px; }
+.sendgo > .verb { height: 32px; }
 .saysize {
   display: flex; flex-direction: column; align-items: flex-end;
   font-family: var(--sans); font-size: 12px; line-height: 15px;
@@ -18019,7 +18137,12 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
                   placeholder="type into the terminal  ·  s  ·  shift+enter for a new line"></textarea>
         <div class="sendside">
           <div class="saysize" id="saysize" hidden></div>
-          <button class="verb" type="submit">send</button>
+          <div class="sendgo">
+            <button class="verb quiet stop" type="button" id="stop" hidden
+                    title="stop the agent: Escape in its terminal, which keeps the work done so far"
+                    >stop</button>
+            <button class="verb" type="submit">send</button>
+          </div>
         </div>
         <div class="slash" id="slash" role="listbox" hidden></div>
       </form>
@@ -21210,6 +21333,10 @@ function drawHeader() {
   // so the Enter after a message approves, and a digit picks an option. The
   // dialog's bar says so where the box stood; the daemon refuses it anyway.
   $("sendbar").hidden = !transcriptShown() || !!whyNoText(s);
+  // Only while the agent works (#714): at its prompt Escape stops nothing.
+  // Off while something is on its way to it, as a send is.
+  $("stop").hidden = $("sendbar").hidden || !s || s.state !== "working";
+  $("stop").disabled = !!s && sending.has(s.id);
   drawResume(s);
   drawRecache(s);
   // Only when it appears. `drawHeader` runs on every push from the daemon,
@@ -29669,6 +29796,7 @@ $("placepick").addEventListener("change", (press) => {
 });
 putIcon($("placedrop"), "close");
 $("placedrop").addEventListener("click", dropPlace);
+$("stop").addEventListener("click", stopAgent);
 $("placeadd").addEventListener("submit", (event) => {
   event.preventDefault();
   addPlace($("placepath").value);
@@ -29915,6 +30043,23 @@ function slashKey(press) {
   }
   press.preventDefault();
   return true;
+}
+
+// The stop (#714): Escape into the agent's pane, through the daemon's
+// `interrupt`, held as a send is. The row goes ready when the transcript
+// says the turn was interrupted (#713), as for Escape in the terminal.
+async function stopAgent() {
+  const id = state.chosen;
+  if (!id || !startSending(id)) return;
+  drawHeader();
+  let answer;
+  try {
+    answer = await tell(id, "interrupt", {});
+  } finally {
+    doneSending(id);
+    drawHeader();
+  }
+  said(answer);
 }
 
 async function sendTyped() {

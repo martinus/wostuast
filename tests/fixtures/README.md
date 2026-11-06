@@ -313,6 +313,18 @@ event log, once the transcript shows that result: `hook_event_name:
 carries `where: "terminal"` when the No was given in the pane rather than
 from the page.
 
+An interrupt fires no hook either. Measured on 2.1.318 with
+`tests/claude_pane.py`, a Bash call allowed and running, then Escape or
+Ctrl-C: the log ends at its `PreToolUse`, with no `PostToolUseFailure` and
+no `Stop`, and the transcript gets the call's result `"User rejected tool
+use"` and the `user` record `[Request interrupted by user for tool use]`;
+after a reply, `[Request interrupted by user]`. Records of Claude Code's own
+follow it (`last-prompt`, `mode`, an `attachment`). The daemon then appends
+`hook_event_name: "Interrupted"`, with `session_id`, `ts` and `at`, the
+moment of that record (#713). On 2.1.318 a bare `sleep N` in Bash is
+refused ("Blocked: standalone sleep"), so `ClaudePane.busy` waits in
+Python.
+
 `status.json` is one status line payload, in the shape the `statusLine`
 command receives on stdin. The numbers in it are invented; the field names are
 not. The fields wostuast reads or might read:

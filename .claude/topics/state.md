@@ -66,6 +66,21 @@ dialog, `/clear`, attention, pids and panes.
     `test_a_no_given_in_the_terminal_ends_the_wait`,
     `test_a_yes_in_the_terminal_is_not_taken_for_a_no`,
     `test_a_decline_seen_in_the_transcript_ends_the_wait`.
+  - **An interrupt is seen in the transcript too, and ends the turn**
+    (#713, `interrupted_in_terminal`, `interrupted_at`, `Interrupted`,
+    `_on_interrupted`): Escape or Ctrl-C during a call fires no hook,
+    measured on 2.1.318, and the row stayed green over an agent back at its
+    prompt. For a working session whose transcript changed, the tick reads
+    only its end (`tail_records`): the last `user` or `assistant` record is
+    `[Request interrupted by user…]` (`INTERRUPTED`). Other records with a
+    moment follow it (an attachment, a queue operation), so the type
+    decides. **No `ended_at`, so no unread and no alert**, as for a No: the
+    reader stopped it. **An interrupt older than the turn running ends
+    nothing** (`at` against `turn_began`, in the daemon and in the fold): a
+    new prompt is in the log before it is in the transcript.
+    `test_an_interrupt_in_the_terminal_ends_the_turn`,
+    `test_an_interrupt_ends_only_the_turn_it_interrupted`,
+    `test_interrupted_at_reads_the_last_conversation_record`.
   - **The reader it makes does not stay for a week** (#294; `forget_gone`
     dropped it only with its session). It goes once no browser watches, no
     dialog is up (`Session.dialog`), and nothing asked for `READER_IDLE`.
