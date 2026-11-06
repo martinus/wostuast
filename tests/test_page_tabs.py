@@ -1033,10 +1033,11 @@ def test_the_summary_tab_says_where_the_tokens_went(ws, page_at):
         # No place to pick: that is the Files and Review tabs'.
         assert page.locator("#placepick").is_hidden()
         page.locator(".sumline.turnlink", has_text="Rename the parser.").click()
-        page.wait_for_function("state.tab === 'transcript'")
+        # In the transcript beside the tab, as the reader asked (#728).
+        page.wait_for_function("state.tab === 'summary' && document.body.classList.contains('sidechat')")
         page.wait_for_function("""() => {
-          const box = document.getElementById('content').getBoundingClientRect();
-          return [...document.querySelectorAll('#content .turn')].some((one) => {
+          const box = document.querySelector('#chat .turnbody').getBoundingClientRect();
+          return [...document.querySelectorAll('#chat .turn')].some((one) => {
             const at = one.getBoundingClientRect();
             return one.textContent.includes('Rename the parser.')
               && at.top >= box.top - 1 && at.top < box.bottom;
@@ -1100,8 +1101,8 @@ def test_the_statistics_tab_says_where_the_time_went_by_tool(ws, page_at):
         assert page.evaluate("[0.4, 30.2, 96.4, 120].map(callTime)") == [
             "0.4s", "30s", "1min 36s", "2min"]
         slow.click()
-        page.wait_for_function("state.tab === 'transcript'")
-        page.wait_for_function("""() => [...document.querySelectorAll('#content .turn.linked')]
+        page.wait_for_function("state.tab === 'summary' && document.body.classList.contains('sidechat')")
+        page.wait_for_function("""() => [...document.querySelectorAll('#chat .turn.linked')]
           .some((one) => one.textContent.includes('grep -r parse'))""")
 
 
@@ -1236,8 +1237,20 @@ def test_the_tool_results_kept_in_context_link_to_their_calls(page_at):
         watch_landings(page)
         card.locator(".sumline", has_text="cat big").click()
         page.wait_for_function("window.landedOn.length > 0")
-        assert page.evaluate("state.tab") == "transcript"
+        assert page.evaluate("state.tab") == "summary"
         assert "cat big" in page.evaluate("window.landedOn[0]")
+        # Again, with the column open on the same transcript: it lands
+        # again, though its blocks are the ones it shows.
+        page.evaluate("document.querySelector('#chat .turnbody').scrollTop = 1e9")
+        card.locator(".sumline", has_text="cat big").click()
+        page.wait_for_function("""() => {
+          const box = document.querySelector('#chat .turnbody').getBoundingClientRect();
+          return [...document.querySelectorAll('#chat .turn')].some((one) => {
+            const at = one.getBoundingClientRect();
+            return one.textContent.includes('cat big') && at.top >= box.top - 1
+              && at.bottom <= box.bottom + 1;
+          });
+        }""")
 
 
 def test_the_month_s_tool_results_kept_in_context_and_by_tool(pair_at):
@@ -1295,7 +1308,7 @@ def test_the_month_s_tool_results_kept_in_context_and_by_tool(pair_at):
         watch_landings(page)
         card.locator(".sumline").first.click()
         page.wait_for_function("window.landedOn.length > 0")
-        assert page.evaluate("[state.chosen, state.tab]") == ["s1", "transcript"]
+        assert page.evaluate("[state.chosen, state.tab]") == ["s1", "summary"]
         assert "cat big" in page.evaluate("window.landedOn[0]")
 
 
@@ -1411,9 +1424,11 @@ def test_the_month_names_its_costliest_sessions_and_turns(pair_at):
         watch_landings(page)
         page.locator(".sumpart.month .sumcard", has_text="costliest turns") \
             .locator(".sumline").first.click()
-        page.wait_for_function("window.landedOn.length > 0")
+        # At once, not at the tab's next poll ten seconds on: the folded
+        # column loads its transcript as it opens (#728).
+        page.wait_for_function("window.landedOn.length > 0", timeout=5000)
         assert page.evaluate("state.chosen") == "s1"
-        assert page.evaluate("state.tab") == "transcript"
+        assert page.evaluate("state.tab") == "summary"
         assert "pytest -q" in page.evaluate("window.landedOn[0]")
         # This session's bars, in their own colour: s1 ran a call.
         page.keyboard.press("4")

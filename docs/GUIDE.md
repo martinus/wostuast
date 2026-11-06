@@ -454,7 +454,8 @@ it says how many tokens of each kind the session used.
 Then its costliest turns. A turn's share of what was spent is marked
 "≈": the status line says only the whole, so each turn gets its share by
 the tokens its replies used, output weighing most and a cache read least.
-Click a turn to read it in the transcript.
+Click a turn to read it in the transcript beside the tab. The transcript
+opens there if it was folded, and the numbers stay in view.
 
 Then the tool results kept in context. Each later reply reads a tool's
 result again, until a compaction or a `/clear`, so a large result read early
@@ -463,13 +464,13 @@ result's tokens, times the replies that read them, the tool and its target,
 and "≈" what that cost. The note above the list says what all results
 together cost, as a share of what the session spent. Point at a line to see
 whether the result is still in context. Click it to read the call in the
-transcript. Use the list to find the calls to make smaller: a narrower
+transcript beside the tab. Use the list to find the calls to make smaller: a narrower
 `grep`, a `sed -n` of the part you need, a `head` on a long log.
 
 Then the time by tool: how long
 each tool's calls ran, not the time a dialog waited for your answer. Then
 its slowest calls, of a second or more; click one to read it in the
-transcript. Then its subagents by kind, and then each subagent, the newest
+transcript beside the tab. Then its subagents by kind, and then each subagent, the newest
 first: how long it ran, its kind, its task, its calls and tokens. Point at one
 to read its last words, and click it to read its own transcript. Then its calls
 by tool.
@@ -488,7 +489,7 @@ still keeps.
 Under it are the costliest sessions of the month, by what each
 spent this month, and the costliest turns of all sessions. Point at one to
 see on the charts the days it spent. Click a session to see its own
-statistics. Click a turn to read it in its transcript. The turns come only
+statistics. Click a turn to read it in its transcript, beside the tab. The turns come only
 from the sessions that wostuast still keeps.
 
 Then the tool results of the month that cost the most while they stayed in

@@ -353,14 +353,16 @@ def watch_landings(page):
 
     The mark of the block landed on (`linked`) stays 2.5 s, and a loaded
     runner looked for it after it had gone: an observer set before the
-    click keeps what it marked. Wait for `window.landedOn.length > 0`."""
+    click keeps what it marked. Wait for `window.landedOn.length > 0`.
+    The whole page: a link may land in the transcript column beside a tab
+    (#728), which is outside `#content`."""
     page.evaluate("""() => {
       window.landedOn = [];
       new MutationObserver((changes) => changes.forEach((one) => {
         if (one.target.classList && one.target.classList.contains('linked')) {
           window.landedOn.push(one.target.textContent);
         }
-      })).observe(document.getElementById('content'),
+      })).observe(document.body,
                   { subtree: true, attributes: true, attributeFilter: ['class'] });
     }""")
 

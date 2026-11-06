@@ -43,6 +43,14 @@ can optimize my future sessions to produce less churn".
   to it in the transcript (`goTo`, `goToTs`, as a saved turn's). It has
   no list column, so no find box: `finds` is empty.
   `test_the_summary_tab_says_where_the_tokens_went`.
+- **A link to a turn or a call lands in the transcript beside the tab**
+  (#728, `showInChat`), as the reader asked: the Transcript tab took them
+  away from the numbers. The column opens if it was folded, loads the
+  transcript if it was not loaded, and is filled again, so it lands: a
+  column that shows the same blocks is left as it is (`paintChat`), and
+  only a fill asks for a landing. A subagent's line still opens its own
+  transcript on the Transcript tab: that is no place in this one.
+  `test_the_tool_results_kept_in_context_link_to_their_calls`.
 - **The tab is "Statistics", in two sections: this session, then all
   sessions this month** (#653, `drawSummary`, `putSpend`), as the reader
   asked; more about all sessions is to come there (#698 named its costliest
