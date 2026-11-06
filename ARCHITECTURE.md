@@ -558,6 +558,7 @@ stateDiagram-v2
         done --> needs_you : ModelAsked<br/>(the page typed /model)
         needs_you --> done : ModelAnswered<br/>(its answer in the transcript)
         working --> done : Stop<br/>(no background task running)
+        working --> done : Interrupted<br/>(its record in the transcript)
         working --> waiting : Stop<br/>(only a command still running)
         waiting --> working : UserPromptSubmit<br/>(the task's end wakes it)
     }
@@ -743,6 +744,7 @@ The daemon uses Python's own `http.server`, with one thread per connection.
 | POST | `/api/session/ID/send` | Type text into the pane. To an agent at its prompt, it waits up to five seconds for the prompt to show in the transcript, and answers `seen: false` when it does not: the page then puts the text back. Refused while a question waits. |
 | POST | `/api/session/ID/answer` | Press the keys that answer a question. |
 | POST | `/api/session/ID/decline` | Say **No** to a permission dialog. |
+| POST | `/api/session/ID/interrupt` | **Stop** a working agent: Escape in its pane. |
 | POST | `/api/session/ID/approve` | Say **Yes** to a permission dialog, through its waiting hook. Touches no terminal. |
 | POST | `/api/session/ID/name` | Give the session a name, and type `/rename` with it where that is safe. |
 | POST | `/api/session/ID/snooze` | Snooze a session that needs you, or wake it. Touches no terminal. |
@@ -1026,6 +1028,7 @@ a terminal. It is small on purpose.
 | **send** | `send` | `load-buffer`, `paste-buffer`, for the text and then for Enter | Your text appears as a prompt. |
 | **answer** | `answer` | each key pasted as its bytes (digits, Tab, Enter) | The agent's question is answered. |
 | **no** | `decline` | Escape pasted as its byte, then a send | The permission dialog closes with No, and your reason follows. |
+| **stop** | `interrupt` | Escape pasted as its byte | The agent stops its turn and keeps the work done so far. |
 
 Only six tmux commands are ever used: `select-window` and `select-pane` to
 jump; `send-keys` to leave copy mode; and `load-buffer`, `paste-buffer`

@@ -65,6 +65,10 @@ def stream(model: str, block: dict, delta: dict, stop: str):
     yield "message_stop", {"type": "message_stop"}
 
 
+#: The one command a manual-mode pane runs with no dialog: `busy`'s wait.
+BUSY_ALLOWED = "Bash(python3:*)"
+
+
 class FakeApi:
     """A Messages API on 127.0.0.1 that answers "ok", or once a tool call.
 
@@ -174,7 +178,9 @@ class ClaudePane:
             # deciding: the dialogs are what most questions are about.
             # `mode="plan"` starts in plan mode, for what a plan's approval
             # looks like.
-            settings["permissions"] = {"defaultMode": mode}
+            # `busy`'s command alone runs with no dialog, so its turn is
+            # still running when a question asks what happens meanwhile.
+            settings["permissions"] = {"defaultMode": mode, "allow": [BUSY_ALLOWED]}
         (self.home / ".claude").mkdir()
         (self.home / ".claude" / "settings.json").write_text(json.dumps(settings))
         env = {"HOME": str(self.home), "PATH": os.environ["PATH"],
@@ -279,14 +285,17 @@ class ClaudePane:
 
     def busy(self, seconds: int = 25, prompt: str = "go") -> None:
         """Start a turn that is still running when this returns: its answer
-        is `sleep <seconds>` in Bash, for "what does X do while a turn
-        runs" (#351). `sleep` needs no dialog, even in manual mode (2.1.288),
-        so waiting for one let the turn end first. And not
+        is a wait of `seconds` in Bash, for "what does X do while a turn
+        runs" (#351). Not `sleep`: 2.1.318 refuses a bare `sleep N` as the
+        call's result ("Blocked: standalone sleep"), and the turn ended at
+        once (#713). Python's runs, with no dialog (`BUSY_ALLOWED`), so
+        waiting for one does not let the turn end first. And not
         `wait_for_turns(2)`: the second request is the one after the tool's
         result, when the turn is all but over."""
-        self.ask("Bash", {"command": f"sleep {seconds}", "description": "wait"},
-                 prompt)
-        if not self.wait_for(f"sleep {seconds}", 30):
+        wait = f"time.sleep({seconds})"
+        self.ask("Bash", {"command": f"python3 -c 'import time; {wait}'",
+                          "description": "wait"}, prompt)
+        if not self.wait_for(wait, 30):
             raise TimeoutError("the turn never started:\n" + self.screen())
 
     def turns(self) -> list[dict]:

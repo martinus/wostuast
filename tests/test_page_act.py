@@ -949,7 +949,7 @@ def test_a_tall_send_box_says_how_much_it_holds(in_pane):
         out = page.evaluate("""() => {
           const size = document.getElementById('saysize').getBoundingClientRect();
           const box = document.getElementById('say').getBoundingClientRect();
-          const send = document.querySelector('#sendbar .sendside .verb')
+          const send = document.querySelector('#sendbar .sendside [type=submit]')
             .getBoundingClientRect();
           return {clear: size.left >= box.right, above: size.bottom <= send.top,
                   oneRow: size.height < 40, button: send.height,
@@ -959,6 +959,35 @@ def test_a_tall_send_box_says_how_much_it_holds(in_pane):
         assert out["clear"] and out["above"] and out["oneRow"], out
         assert out["button"] == 32 and out["level"] <= 1, out
         assert "Mono" not in out["face"], out
+
+
+def test_a_stop_stands_beside_send_while_the_agent_works(ws, in_pane):
+    """The reader asked for a stop, as claude.ai has (#714): beside send,
+    and only while the agent works, as the reader chose, so send still
+    queues a message for a busy agent. A press asks the daemon to
+    interrupt, which is one Escape in the pane."""
+    daemon, base, seen = in_pane
+    with opened((None, base)) as page:
+        page.wait_for_selector("#sendbar:not([hidden])")
+        assert page.locator("#stop").is_hidden(), "a stop for an agent at its prompt"
+        ws.append_event(conftest.event("UserPromptSubmit", pane="%7", pid=1, prompt="go",
+                                       ts=time.time()))
+        daemon.tick()
+        page.wait_for_selector("#stop:not([hidden])")
+        place = page.evaluate("""() => {
+          const stop = document.getElementById('stop').getBoundingClientRect();
+          const send = document.querySelector('#sendbar [type=submit]').getBoundingClientRect();
+          return {beside: stop.right <= send.left && Math.abs(stop.top - send.top) < 1,
+                  tall: stop.height === send.height};
+        }""")
+        assert place == {"beside": True, "tall": True}, place
+        with page.expect_request(lambda one: one.url.endswith("/interrupt")) as asked:
+            page.click("#stop")
+        assert asked.value.method == "POST"
+        deadline = time.time() + 15
+        while conftest.pressed(seen) != ["Escape"] and time.time() < deadline:
+            time.sleep(0.05)
+        assert conftest.pressed(seen) == ["Escape"], seen
 
 
 def test_the_size_goes_when_the_send_box_empties(in_pane):

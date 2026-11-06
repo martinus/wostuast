@@ -749,6 +749,28 @@ def test_an_interrupted_tool_says_so(ws):
     assert session.last_event == "Bash sleep 99 interrupted"
 
 
+def test_an_interrupt_ends_only_the_turn_it_interrupted(ws):
+    """wostuast's own `Interrupted` (#713) ends a working turn, with no
+    unread and no alert: the reader stopped it. One from before the turn
+    now running is a late read of an old interrupt, and ends nothing."""
+    session = fold(
+        ws,
+        event("UserPromptSubmit", prompt="build it", ts=1000.0),
+        event("PreToolUse", tool_name="Bash", tool_input={"command": "make"},
+              tool_use_id="t1", ts=1001.0),
+        event("Interrupted", at=1005.0, ts=1006.0),
+    )
+    assert (session.state, session.last_event, session.ended_at) == ("done", "interrupted", 0.0)
+    assert session.calls == {}
+    session = fold(
+        ws,
+        event("UserPromptSubmit", prompt="build it", ts=1000.0),
+        event("UserPromptSubmit", prompt="again", ts=1010.0),
+        event("Interrupted", at=1005.0, ts=1011.0),
+    )
+    assert session.state == "working"
+
+
 def test_a_denied_permission_sends_no_event_at_all(ws):
     """Measured against a real session: saying No to the dialog fires no hook.
     The log ends at the Notification. So the session keeps waiting, which is

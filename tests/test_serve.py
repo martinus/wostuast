@@ -2512,6 +2512,41 @@ def test_a_send_never_answers_a_permission_dialog(ws, declining):
     assert seen == []
 
 
+def test_a_stop_is_one_escape_into_a_working_agent(ws, in_tmux):
+    """The reader asked for a stop, as claude.ai has (#714). It is one
+    Escape, pasted, never Ctrl-C: Escape keeps the work, and Ctrl-C at an
+    idle prompt clears it and a second quits Claude Code. Only into a
+    working agent, not into a dialog or a question (they have their own
+    No and answers), and not while something else is being typed."""
+    daemon, base, seen = in_tmux
+    url = base + "/api/session/s1/interrupt"
+    status, body = post(url, {}, token=daemon.token)
+    assert status == 409 and "not working" in body["error"], body
+    assert seen == []
+    ws.append_event(event("UserPromptSubmit", pane="%7", prompt="build it"))
+    daemon.store.refresh()
+    daemon.typing.add("s1")
+    status, body = post(url, {}, token=daemon.token)
+    assert status == 409 and seen == [], body
+    daemon.typing.discard("s1")
+    status, body = post(url, {}, token=daemon.token)
+    assert (status, body) == (200, {"id": "s1", "done": True})
+    assert conftest.pressed(seen) == ["Escape"]
+    flat = " ".join(" ".join(one) for one in seen)
+    assert "C-c" not in flat and "\x03" not in flat
+    assert "s1" not in daemon.typing, "the session was not given back"
+    # A question up has its own answers: the Escape would be a No nobody chose.
+    seen.clear()
+    ws.append_event(event("PreToolUse", pane="%7", tool_name="AskUserQuestion",
+                          tool_use_id="q1", tool_input={"questions": [
+                              {"question": "Which?", "header": "Pick",
+                               "options": [{"label": "A"}, {"label": "B"}],
+                               "multiSelect": False}]}))
+    daemon.store.refresh()
+    status, body = post(url, {}, token=daemon.token)
+    assert status == 409 and "question" in body["error"] and seen == [], body
+
+
 def test_no_send_goes_in_while_a_no_is_on_its_way(ws, in_tmux):
     daemon, base, seen = in_tmux
     daemon.declining.add("s1")
@@ -2657,6 +2692,66 @@ def test_a_no_given_in_the_terminal_ends_the_wait(ws, declining):
     declined = [one for one in written if one.get("hook_event_name") == "Declined"]
     assert [one.get("where") for one in declined] == ["terminal"], declined
     assert daemon.store.rows[0]["state"] == "done"
+
+
+def test_an_interrupt_in_the_terminal_ends_the_turn(ws, served, transcript_file):
+    """Escape or Ctrl-C during a call fires no hook at all, measured on
+    2.1.318, and the row stayed green over an agent back at its prompt
+    (#713). The transcript's last record says it, and the tick writes
+    `Interrupted`: the row is ready, with no unread and no alert, as the
+    reader stopped it. An interrupt from before the turn now running ends
+    nothing: the new prompt is not in the transcript yet."""
+    daemon, _ = served
+    now = time.time()
+
+    def stamp(at):
+        return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(at))
+
+    path = transcript_file("s1", [conftest.record("you", "build it", ts=stamp(now - 10)),
+                                  conftest.record("tool", "make", tool_id="t1",
+                                                  ts=stamp(now - 9))])
+    ws.append_event(conftest.event("SessionStart", ts=now - 11, transcript_path=str(path)))
+    ws.append_event(conftest.event("UserPromptSubmit", ts=now - 10, prompt="build it"))
+    ws.append_event(conftest.event("PreToolUse", ts=now - 9, tool_name="Bash",
+                                   tool_input={"command": "make"}, tool_use_id="t1"))
+    daemon.tick()
+    assert daemon.store.sessions["s1"].state == "working"
+    with open(path, "a") as handle:
+        handle.write(conftest.records(
+            conftest.record("result", REJECTED, tool_id="t1", ts=stamp(now - 5)),
+            conftest.record("you", "[Request interrupted by user for tool use]",
+                            ts=stamp(now - 5)),
+            # Claude Code's book-keeping, after it.
+            {"type": "last-prompt", "lastPrompt": "build it"}))
+    daemon.tick()
+    session = daemon.store.sessions["s1"]
+    assert (session.state, session.last_event, session.ended_at) == ("done", "interrupted", 0.0)
+    assert not session.unread
+    # A prompt typed since: its turn is not the one interrupted.
+    ws.append_event(conftest.event("UserPromptSubmit", ts=time.time(), prompt="again"))
+    daemon.tick()
+    with open(path, "a") as handle:
+        handle.write(conftest.records({"type": "mode", "mode": "default"}))
+    daemon.tick()
+    assert daemon.store.sessions["s1"].state == "working"
+    with open(ws.events_path(), encoding="utf-8") as handle:
+        written = [json.loads(line) for line in handle if line.strip()]
+    assert [one["hook_event_name"] for one in written].count("Interrupted") == 1, \
+        "the old interrupt was written again"
+    # The end of a file is read again only when the file changed.
+    reads = []
+    real = ws.interrupted_at
+    ws.interrupted_at = lambda where: reads.append(where) or real(where)
+    try:
+        daemon.tick()
+        daemon.tick()
+        assert reads == []
+        with open(path, "a") as handle:
+            handle.write(conftest.records(conftest.record("claude", "On it.")))
+        daemon.tick()
+        assert reads == [path]
+    finally:
+        ws.interrupted_at = real
 
 
 def test_a_yes_in_the_terminal_is_not_taken_for_a_no(ws, declining):

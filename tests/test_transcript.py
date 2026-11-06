@@ -1152,3 +1152,26 @@ def test_claude_code_s_recap_is_taken_only_after_the_last_answer(ws, tmp_path):
                                                "at": ended + 10}
     assert ws.away_summary_in(path, ended + 11) is None, "older than the answer"
     assert ws.away_summary_in(tmp_path / "gone.jsonl", 0.0) is None
+
+
+def test_interrupted_at_reads_the_last_conversation_record(ws, tmp_path):
+    """The interrupt is the transcript's last `user` or `assistant` record
+    (#713): during a call, `[Request interrupted by user for tool use]`;
+    during a reply, `[Request interrupted by user]`. Claude Code's
+    book-keeping after it does not count, and a reply after it means the
+    agent went on."""
+    path = tmp_path / "s1.jsonl"
+    at = "2026-09-18T14:00:05.000Z"
+    for said in ("[Request interrupted by user for tool use]", "[Request interrupted by user]"):
+        # An attachment and a queue operation carry a moment too.
+        path.write_text(conftest.records(conftest.record("you", "go"), conftest.record("you", said, ts=at),
+                                {"type": "attachment", "timestamp": at,
+                                 "attachment": {"type": "date"}},
+                                {"type": "last-prompt", "lastPrompt": "go"}))
+        assert ws.interrupted_at(path) == ws.parse_timestamp(at), said
+    path.write_text(conftest.records(conftest.record("you", "[Request interrupted by user]", ts=at),
+                            conftest.record("claude", "Going on.")))
+    assert ws.interrupted_at(path) == 0.0
+    path.write_text(conftest.records(conftest.record("you", "tell me about [Request interrupted by user]")))
+    assert ws.interrupted_at(path) == 0.0
+    assert ws.interrupted_at(tmp_path / "gone.jsonl") == 0.0

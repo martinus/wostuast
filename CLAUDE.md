@@ -62,10 +62,10 @@ Claude Code hooks append one JSON line per event to
 checks the setup, writes what is behind (`bring_up_to_date`), tails the log
 into a `Store`, and serves one page over HTTP + SSE: a session list, four
 tabs (Transcript, Files, Review, `data-tab="diff"`, and Statistics, `summary`),
-and four views over them (Unread, Saved, Search, Commands; #411). Four things go
+and four views over them (Unread, Saved, Search, Commands; #411). Five things go
 back to the terminal, all through tmux: jump, send, the keys that answer a
-question, and a No (an Escape, then a send); a rename is a send of
-`/rename` (#351). A Yes is no key: the dialog's own hook waits for it and
+question, a No (an Escape, then a send), and a stop (an Escape, #714); a
+rename is a send of `/rename` (#351). A Yes is no key: the dialog's own hook waits for it and
 answers allow for that dialog alone (`approve`). Nothing owns the agent.
 
 ## Goals and non-goals
