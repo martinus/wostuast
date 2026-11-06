@@ -29007,6 +29007,8 @@ function putSpendHit(chart, day, words, spend) {
     + String(day).padStart(2, "0")) + ": " + words;
 }
 
+// --- the Statistics tab's pieces: the head, the clock, the token bars and lists, a session's charts, its costliest turns and its calls [topics/summary]
+
 // The few numbers that say the most, each over what it is, then where the
 // time and the tokens went, as charts (#688): three times and four counts
 // of tokens side by side were hard to read.
