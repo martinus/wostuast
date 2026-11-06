@@ -16718,10 +16718,18 @@ body.chatstrip .chat > .chathead > b { display: none; }
    ran over the edge of the box, and broken into rows it read badly. */
 .sendside { display: flex; flex-direction: column; align-items: flex-end;
   gap: 6px; flex-shrink: 0; }
-/* Send, and the stop beside it while the agent works (issue 714): quiet,
-   so it is not taken for send. */
-.sendgo { display: flex; gap: 6px; }
-.sendgo > .verb { height: 32px; }
+/* The box's one button (issue 714): Enter's icon, or a stop while the agent
+   works and nothing is typed. Square, as tall as one line of the box. Two
+   buttons side by side, send and stop, made the wrong one easy to press. */
+.sendside > .go {
+  width: 32px; height: 32px; padding: 0;
+  display: grid; place-items: center;
+}
+.go .icon {
+  width: 16px; height: 16px; fill: none; stroke: currentColor;
+  stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round;
+}
+.go[data-does="stop"] .icon { fill: currentColor; }
 .saysize {
   display: flex; flex-direction: column; align-items: flex-end;
   font-family: var(--sans); font-size: 12px; line-height: 15px;
@@ -18142,12 +18150,7 @@ dialog.help dd { margin: 0; color: var(--ink-mute); }
                   placeholder="type into the terminal  ·  s  ·  shift+enter for a new line"></textarea>
         <div class="sendside">
           <div class="saysize" id="saysize" hidden></div>
-          <div class="sendgo">
-            <button class="verb quiet stop" type="button" id="stop" hidden
-                    title="stop the agent: Escape in its terminal, which keeps the work done so far"
-                    >stop</button>
-            <button class="verb" type="submit">send</button>
-          </div>
+          <button class="verb go" type="submit" id="go"></button>
         </div>
         <div class="slash" id="slash" role="listbox" hidden></div>
       </form>
@@ -18475,6 +18478,11 @@ const ICONS = {
   copy: "M4.6 4.2V2.6a1 1 0 0 1 1-1h5.8a1 1 0 0 1 1 1v5.8a1 1 0 0 1-1 1H9.8"
         + "M1.6 5.6a1 1 0 0 1 1-1h5.8a1 1 0 0 1 1 1v5.8a1 1 0 0 1-1 1H2.6a1 1 0 0 1-1-1z",
   check: "M2.4 7.4l3 3 6.2-6.6",
+  // The send box's one button (#714): the Enter key's arrow, which sends,
+  // and a square, filled, which stops, as claude.ai draws them.
+  enter: "M11.4 2.8v3.8a1.8 1.8 0 0 1-1.8 1.8H2.8M5.4 5.8L2.8 8.4l2.6 2.6",
+  stop: "M5 4.2h4a.8 .8 0 0 1 .8 .8v4a.8 .8 0 0 1-.8 .8H5a.8 .8 0 0 1-.8-.8V5a.8 .8 0 0 1"
+        + " .8-.8z",
   // A row's hover (#389) and its reminder (#394): a clock, the same clock
   // struck through to cancel, and the dot an unread row wears. The views
   // over the list (#391): an inbox, the bookmark below, and a lens.
@@ -21361,10 +21369,7 @@ function drawHeader() {
   // so the Enter after a message approves, and a digit picks an option. The
   // dialog's bar says so where the box stood; the daemon refuses it anyway.
   $("sendbar").hidden = !transcriptShown() || !!whyNoText(s);
-  // Only while the agent works (#714): at its prompt Escape stops nothing.
-  // Off while something is on its way to it, as a send is.
-  $("stop").hidden = $("sendbar").hidden || !s || s.state !== "working";
-  $("stop").disabled = !!s && sending.has(s.id);
+  paintGo(s);
   drawResume(s);
   drawRecache(s);
   // Only when it appears. `drawHeader` runs on every push from the daemon,
@@ -29824,7 +29829,6 @@ $("placepick").addEventListener("change", (press) => {
 });
 putIcon($("placedrop"), "close");
 $("placedrop").addEventListener("click", dropPlace);
-$("stop").addEventListener("click", stopAgent);
 $("placeadd").addEventListener("submit", (event) => {
   event.preventDefault();
   addPlace($("placepath").value);
@@ -30073,6 +30077,29 @@ function slashKey(press) {
   return true;
 }
 
+// The send box's one button (#714), as on claude.ai: the reader found send
+// and a stop side by side too easy to press wrong. It is Enter's arrow,
+// which sends what is typed; and a stop only while the agent works and the
+// box is empty: at its prompt Escape stops nothing, and with words typed
+// the press means to send them, which a busy agent queues. Off while
+// something is on its way to the agent: a send empties the box, and the
+// button turned into a stop under the pointer, so a double-click stopped
+// the agent the reader had just written to.
+function paintGo(s) {
+  const go = $("go");
+  const stops = !!s && s.state === "working" && !$("say").value.trim();
+  const does = stops ? "stop" : "send";
+  if (go.dataset.does !== does) {
+    go.dataset.does = does;
+    go.replaceChildren();
+    putIcon(go, stops ? "stop" : "enter");
+    go.title = stops ? "stop the agent: Escape in its terminal, which keeps the work done so far"
+      : "send  \u00b7  Enter";
+    go.setAttribute("aria-label", stops ? "stop the agent" : "send");
+  }
+  go.disabled = !!s && sending.has(s.id);
+}
+
 // The stop (#714): Escape into the agent's pane, through the daemon's
 // `interrupt`, held as a send is. The row goes ready when the transcript
 // says the turn was interrupted (#713), as for Escape in the terminal.
@@ -30105,11 +30132,13 @@ async function sendTyped() {
   // holding the sent text, edited meanwhile, sent it a second time.
   box.value = "";
   fitSay();                    // back to one line, whatever it had grown to
+  paintGo(current());
   let answer;
   try {
     answer = await tell(id, "send", { text });
   } finally {
     doneSending(id);
+    paintGo(current());
   }
   said(answer);
   // `seen: false` is a send the daemon watched for and Claude Code never
@@ -30196,7 +30225,10 @@ function takeDraft(id) {
 
 $("sendbar").addEventListener("submit", (press) => {
   press.preventDefault();
-  sendTyped();
+  // Only the button submits the form: Enter calls `sendTyped` itself, so
+  // Enter in an empty box never stops the agent.
+  if ($("go").dataset.does === "stop") stopAgent();
+  else sendTyped();
 });
 
 // The box is one line until it needs more, and then it is as tall as what is
@@ -30240,7 +30272,12 @@ function sizeSay(box) {
 
 // --- start: what runs once, when the script has loaded; the listeners and the first draw
 
-$("say").addEventListener("input", () => { sentAt = -1; fitSay(); followSlash(); });
+$("say").addEventListener("input", () => {
+  sentAt = -1;
+  fitSay();
+  followSlash();
+  paintGo(current());
+});
 $("say").addEventListener("blur", closeSlash);
 $("say").addEventListener("keydown", (press) => {
   if (slashKey(press)) return;

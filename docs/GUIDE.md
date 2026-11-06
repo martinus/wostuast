@@ -304,10 +304,14 @@ with what Claude Code answered. You can send a slash command from the send box
 too. One that opens a menu, such as `/model` alone, opens it in the terminal:
 press <kbd>Enter</kbd> to jump there and pick.
 
-While an agent works, a **stop** button stands beside **send**. It presses
-Escape in the agent's pane, as you would in the terminal: the agent stops its
-turn and keeps the work done so far, and waits for your next message. It is
-never Ctrl-C, which can quit Claude Code. A turn you stop, here or in the
+The send box has one button. It shows the Enter key's arrow, and a click
+sends what you typed, as <kbd>Enter</kbd> does. While an agent works and
+the box is empty, the button is a **stop**: a filled square. When you type,
+it is the arrow again, and a click sends your message, which Claude Code
+keeps until the agent is done. <kbd>Enter</kbd> never stops the agent.
+The stop presses Escape in the agent's pane, as you would in the terminal:
+the agent stops its turn and keeps the work done so far, and waits for your
+next message. It is never Ctrl-C, which can quit Claude Code. A turn you stop, here or in the
 terminal, ends the session's green row; it does not mark the session unread.
 
 If Claude Code does not take a message you send to an agent at its prompt,
