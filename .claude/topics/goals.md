@@ -56,8 +56,11 @@ If a feature needs one of these, leave the feature out.
   a monthly allowance. **So are the month's costliest sessions and turns,
   since #698**: what they spent, by session and by turn; **and the tool
   results that cost the most while they stayed in context, by call and by
-  tool**, for the session (#699) and the month. Shown only, from the status lines' own numbers; a
-  bill or a price table is out. **A spend limit is out**: one shipped,
+  tool**, for the session (#699) and the month. **So is where all
+  sessions' time went this month**: how long they were busy each day, their
+  tools' time and their slowest calls, as the reader asked for the month's
+  own "Where the time went". Shown only, from the status lines' and the
+  hooks' own numbers; a bill or a price table is out. **A spend limit is out**: one shipped,
   typed into a terminal with nobody watching, and went with the Session
   tab that set it. The allowance stops nothing.
 - **Knowing a worktree layout.** A session is an agent standing in a

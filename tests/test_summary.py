@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -167,6 +168,61 @@ def test_a_session_s_time_goes_by_tool_and_its_slowest_calls_are_kept(ws):
     assert got["slow"] == [
         {"tool": "Bash", "what": "make test", "seconds": 96.4, "began": 1003.6},
         {"tool": "Bash", "what": "make -j8", "seconds": 2.5, "began": 1147.5}]
+
+
+def test_a_session_keeps_its_time_by_day(ws):
+    """The month's "Where the time went" counts this month's days only, so
+    the fold keeps a session's busy time and its calls' time by local day:
+    a turn on the day it began, though it ends after midnight; a call on
+    its own day. The same events read again count nothing twice."""
+    night = time.mktime((2026, 10, 31, 23, 0, 0, 0, 0, -1))
+    morning = time.mktime((2026, 11, 1, 10, 0, 0, 0, 0, -1))
+    events = [event("SessionStart", ts=night),
+              event("UserPromptSubmit", ts=night + 1800, prompt="go"),
+              event("PostToolUse", ts=night + 2400, tool_name="Bash", tool_use_id="u1",
+                    tool_input={"command": "make"}, duration_ms=30_000),
+              event("Stop", ts=night + 5400),
+              event("UserPromptSubmit", ts=morning, prompt="again"),
+              event("PostToolUse", ts=morning + 300, tool_name="Bash", tool_use_id="u2",
+                    tool_input={"command": "ls"}, duration_ms=10_000),
+              event("PostToolUse", ts=morning + 301, tool_name="Read", tool_use_id="u3",
+                    tool_input={"file_path": "/w/a"}, duration_ms=1_000),
+              event("Stop", ts=morning + 600)]
+    store = ws.Store()
+    store.fold(events)
+    store.fold(events)
+    session = store.sessions["s1"]
+    assert session.busy_days == {"2026-10-31": 3600.0, "2026-11-01": 600.0}
+    assert session.tool_days == {"2026-10-31": {"Bash": [1, 30.0]},
+                                 "2026-11-01": {"Bash": [1, 10.0], "Read": [1, 1.0]}}
+
+
+def test_the_month_s_time_counts_this_month_s_days_of_every_session(ws):
+    """Where all sessions' time went this month, as the reader asked: the
+    busy time of each day, the calls' time by tool, and the slowest calls
+    each session keeps that began this month, with their sessions. A day
+    of last month counts nothing."""
+    now = time.mktime((2026, 11, 3, 12, 0, 0, 0, 0, -1))
+    halloween = time.mktime((2026, 10, 31, 12, 0, 0, 0, 0, -1))
+    first = time.mktime((2026, 11, 1, 12, 0, 0, 0, 0, -1))
+    a = ws.Session(session_id="a", busy_days={"2026-10-31": 999.0, "2026-11-01": 100.0,
+                                              "2026-11-03": 50.0},
+                   tool_days={"2026-10-31": {"Bash": [5, 500.0]},
+                              "2026-11-01": {"Bash": [1, 10.0]}},
+                   slow_calls=[ws.SlowCall(tool="Bash", what="make all", seconds=300.0,
+                                           began=halloween),
+                               ws.SlowCall(tool="Bash", what="make test", seconds=20.0,
+                                           began=first)])
+    b = ws.Session(session_id="b", busy_days={"2026-11-03": 25.0},
+                   tool_days={"2026-11-03": {"Bash": [2, 4.0], "Read": [3, 30.0]}},
+                   slow_calls=[ws.SlowCall(tool="Read", what="big.log", seconds=25.0,
+                                           began=now - 60)])
+    got = ws.month_time_json(now, [a, b])
+    assert got["busy"] == [100.0, 0.0, 75.0]
+    assert got["tool_time"] == [{"tool": "Read", "calls": 3, "seconds": 30.0},
+                                {"tool": "Bash", "calls": 3, "seconds": 14.0}]
+    assert [(one["id"], one["what"]) for one in got["slow"]] == [("b", "big.log"),
+                                                                ("a", "make test")]
 
 
 def test_a_resume_the_cache_did_not_outlast_says_what_its_next_prompt_costs(ws):

@@ -84,7 +84,7 @@ fights one, ask whether the goal bends before you build. Keep the numbers.
 owning the agent process (a keystroke into a pane is allowed, a signal is
 not); a terminal emulator; a Yes the reader did not give, or one that keys
 carry; agent-to-agent messaging, teams, orchestration, accounting across
-sessions beyond what they spent, or a spend limit; knowing a worktree layout; Electron, React, any build step,
+sessions beyond what they spent and how long they ran, or a spend limit; knowing a worktree layout; Electron, React, any build step,
 a dependency, or a vendored JavaScript library; a review that goes
 anywhere but the agent's pane.
 

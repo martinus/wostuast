@@ -454,7 +454,8 @@ each other in their own column. Each part answers one question:
    they cost. The key under it says how many tokens of each kind were used.
 2. **Where the money went.** The costliest turns, and the tool results kept
    in context.
-3. **Where the time went.** Only for one session: the month keeps no time.
+3. **Where the time went.** How long the turns ran, what the tools took,
+   and the slowest calls.
 
 Point at the title of a list to read how it is counted. Every amount shows
 its cents, so the amounts line up.
@@ -538,6 +539,14 @@ month that cost the most while they stayed in context, with the name of
 each session. Click one to read the call in its session's transcript. Under
 them, what all those results cost by tool: there you see a habit, for
 example the same files read at the start of every session.
+
+In part 3, how long all sessions were busy each day, a column a day: from
+each prompt to the end of its turn. Point at a day to read its time. Then
+the time and calls by tool of all sessions this month, and their slowest
+calls, each with the name of its session. Click a call to read it in its
+session's transcript. Like the costliest turns, these come only from the
+sessions that wostuast still keeps, and each session keeps only its eight
+slowest calls.
 
 Each status line keeps what its session spent, a day at a time, from the
 day you installed this version. A day's spend is how much each session's
