@@ -1112,16 +1112,16 @@ def test_the_statistics_tab_says_where_the_time_went_by_tool(ws, page_at):
 
 
 def show_month(page):
-    """All sessions this month, behind the Statistics tab's switch (#723)."""
-    page.click(".statswitch [data-view=month]")
+    """All sessions this month, beside the session or under it."""
     page.wait_for_selector(".sumpart.month")
 
 
 def test_the_statistics_tab_uses_a_wide_screen(ws, page_at):
-    """One column of 980 px left most of a wide screen empty, and the month
-    below the fold (#683). Where the pane is wide enough, the two sections
-    stand side by side and the session's lists share rows, so nothing
-    scrolls; on a narrow one, the sections stand one under the other."""
+    """The reader wanted both views in sight, not a switch between them: the
+    session on the left, all sessions this month on the right, and the
+    month under the session where the two do not fit (#723). Side by side,
+    each part is one row over both columns, so a part stands level with
+    its partner, and each part is a panel of its own."""
     daemon, path = page_at
     used = dict(input_tokens=40, output_tokens=9000, cache_read_input_tokens=50000)
     made = conftest.record("tool", "make test", tool_id="g1")
@@ -1134,35 +1134,35 @@ def test_the_statistics_tab_uses_a_wide_screen(ws, page_at):
     daemon.store.refresh()
     today = time.strftime("%Y-%m-%d")
     ws.write_status("s2", ws.Status(cost_usd=4.0, days={today: 4.0}))
+    look = """() => {
+      const at = (sel) => [...document.querySelectorAll(sel)].map((one) => {
+        const box = one.getBoundingClientRect();
+        return [Math.round(box.left), Math.round(box.top), Math.round(box.right)]; });
+      return {views: at('.sumview'), mine: at('.sumpart:not(.month) > .sumgroup'),
+              month: at('.sumpart.month > .sumgroup'),
+              border: getComputedStyle(document.querySelector('.sumgroup')).borderTopWidth};
+    }"""
     with opened(path) as page:
         page.set_viewport_size({"width": 2560, "height": 1440})
         wait_for_map(page)
         page.keyboard.press("4")
         page.wait_for_selector(".sumcard >> text=make test")
-        boxes = """() => [...document.querySelectorAll(SELECTOR)].map((one) => {
-          const at = one.getBoundingClientRect();
-          return [Math.round(at.left), Math.round(at.top), Math.round(at.right),
-                  Math.round(at.bottom)]; })"""
-        # One view at a time (#723): the session, and no month beside it.
-        assert page.locator(".sumpart").count() == 1
-        assert page.locator(".sumpart.month").count() == 0
-        # Two cards to a row, never more, however wide: a line is read across.
-        cards = page.evaluate(boxes.replace("SELECTOR", "'.sumgroup:last-child .sumcards > *'"))
-        assert len(cards) >= 2 and cards[0][1] == cards[1][1], cards
-        assert len({one[0] for one in cards}) <= 2, cards
-        assert page.evaluate("document.querySelector('.summary')"
-                             ".getBoundingClientRect().width") <= 1100
-        # The switch shows the month, and back; this browser keeps it.
-        show_month(page)
-        page.wait_for_selector(".spendsvg")
-        assert page.locator(".sumpart:not(.month)").count() == 0
-        assert page.get_attribute(".statswitch [data-view=month]", "aria-pressed") == "true"
-        page.reload()
-        wait_for_map(page)
-        page.keyboard.press("4")
-        page.wait_for_selector(".sumpart.month")
-        page.click(".statswitch [data-view=session]")
-        page.wait_for_selector(".sumpart:not(.month) .sumhead")
+        page.wait_for_selector(".sumpart.month .spendsvg")
+        assert page.locator(".statswitch").count() == 0
+        got = page.evaluate(look)
+        session, month = got["views"]
+        assert session[1] == month[1] and month[0] > session[2], got
+        # The parts on rows: each of the month's stands level with the
+        # session's part of the same number.
+        assert [one[1] for one in got["month"]] == [one[1] for one in got["mine"]][:2], got
+        assert got["border"] == "1px", got
+        # Narrow, the month goes under the session.
+        page.set_viewport_size({"width": 1100, "height": 900})
+        page.wait_for_function("""() => {
+          const [one, two] = document.querySelectorAll('.sumview');
+          return two.getBoundingClientRect().top > one.getBoundingClientRect().bottom
+            && Math.abs(two.getBoundingClientRect().left
+                        - one.getBoundingClientRect().left) < 1; }""")
 
 
 def test_the_costliest_turns_and_the_slowest_calls_have_bars(ws, page_at):
@@ -1427,11 +1427,11 @@ def test_the_month_names_its_costliest_sessions_and_turns(pair_at):
         bar = page.locator(".sumpart.month .kindbar")
         assert bar.locator(".kindshare").all_inner_texts() == ["75%", "25%"]
         assert "output: 1k tokens" in bar.get_attribute("aria-label")
-        # One colour for every list's bars (#723): one view at a time, so
-        # no second colour is needed to say which a list is of.
+        # The month's bars are its charts' blue (#698): side by side, a
+        # glance says which column a list is of.
         colour = "(selector) => getComputedStyle(document.querySelector(selector)).backgroundColor"
         spend = page.evaluate("getComputedStyle(document.querySelector('.spendday')).fill")
-        assert page.evaluate(colour, ".sumpart.month .sumbar") != spend
+        assert page.evaluate(colour, ".sumpart.month .sumbar") == spend
         # On a hover, the days it spent stand out on both charts, as the
         # reader asked: s2 spent on the 1st and the 3rd.
         page.evaluate("state.spend.sessions[0].days = [1, 0, 3]")
@@ -1609,14 +1609,14 @@ def test_the_statistics_tab_draws_the_month_against_the_allowance(ws, page_at):
         page.wait_for_selector(".summary .sumnote >> nth=-1")
         page.wait_for_function("!!state.spend")
         assert "Nothing kept yet" in page.locator(".summary").inner_text()
-        assert page.locator(".statswitch button").all_inner_texts() == [
+        assert page.locator(".sumview").all_inner_texts() == [
             "This session", "This month, all sessions"]
         # Two sessions: one new today, one that spent a dollar yesterday.
         ws.write_status("s1", ws.Status(cost_usd=2.0, days={today: 2.0}))
         ws.write_status("s2", ws.Status(cost_usd=4.0, days={yesterday: 1.0, today: 4.0}))
         page.evaluate("loadSpend()")
         page.wait_for_selector(".spendsvg")
-        tiles = page.locator(".sumhead").first.inner_text()
+        tiles = page.locator(".sumpart.month .sumhead").inner_text()
         # Yesterday's dollar is this month's too, unless today is the 1st.
         month = 6 if yesterday[:7] == today[:7] else 5
         assert f"${month}.00\nspent" in tiles and "$5.00\ntoday" in tiles, tiles
