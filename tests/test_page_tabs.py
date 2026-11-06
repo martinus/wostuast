@@ -1487,10 +1487,11 @@ def test_the_month_names_its_costliest_sessions_and_turns(pair_at):
         assert "each session's smallest context" \
             in card.locator(".sumline").first.get_attribute("title")
         # The month's bars are its charts' blue (#698): side by side, a
-        # glance says which column a list is of.
+        # glance says which column a list is of. Not the list of what the
+        # tokens were for: it wears the context chart's colours (#723).
         colour = "(selector) => getComputedStyle(document.querySelector(selector)).backgroundColor"
         spend = page.evaluate("getComputedStyle(document.querySelector('.spendday')).fill")
-        assert page.evaluate(colour, ".sumpart.month .sumbar") == spend
+        assert page.evaluate(colour, ".sumpart.month .sumbar:not([class*=for])") == spend
         # On a hover, the days it spent stand out on both charts, as the
         # reader asked: s2 spent on the 1st and the 3rd.
         page.evaluate("state.spend.sessions[0].days = [1, 0, 3]")
