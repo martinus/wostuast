@@ -264,8 +264,9 @@ for each session, as tall as a row, with the name turned on its side and in
 the colour of its state. Click a tab to open that session, and point at it
 to see its whole row, opened out in its place. The list beside a tab (the map,
 the files, the changed files) is one column for the first three tabs, so it
-folds on all three. The transcript beside the Files and Review tabs folds
-the same way, at the right, and starts folded. The browser remembers what
+folds on all three. Folded, its strip says what it holds, such as "Files":
+click the word to open it. The transcript beside the Files and Review tabs
+folds the same way, at the right, and starts folded. The browser remembers what
 you folded. Press <kbd>f</kbd> or
 <kbd>/</kbd> to bring back the column you type into.
 

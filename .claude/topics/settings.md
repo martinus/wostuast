@@ -42,14 +42,14 @@ ticket links rows. topics/safety-install holds the file it writes.
   `test_the_file_line_carries_the_width_and_wrap_beside_the_code`,
   `test_a_button_beside_the_code_shows_its_choice_before_the_file_answers`.
   - **Every line's right-hand controls end on one line** (`--line-end`,
-    24 px, the tab row's own): the Review bar, the commit message's md /
+    24 px from their pane's edge): the Review bar, the commit message's md /
     txt, a file's card, the Files tab's file line. In the scrolling pane
     `--line-end-in` subtracts its bar (`scrollbar-gutter: stable` on
     `.diffscroll`, measured by `measureScrollbar` in such a pane: an empty
     `overflow: scroll` box said 0 px).
     The read-as control is one button, "txt", lit as these are.
     `test_every_right_hand_control_ends_on_one_line`,
-    `test_the_file_line_ends_where_the_tab_row_ends`.
+    `test_the_file_line_ends_where_its_line_ends`.
 - **Labels are one word** ("tab", "lines", "diff", "links"), for room.
   **One face, `--sans`, labels and buttons too**: a url in the fixed face
   made the menu as wide as the longest link.

@@ -899,6 +899,76 @@ def test_the_transcript_column_folds_as_the_lists_do(repo_page):
         page.click(".content .side .fold")
 
 
+def test_the_tab_row_ends_with_the_fold_button_and_every_bar_is_one_height(repo_page):
+    """The reader saw the model, the cost and the jump button move 34 px when
+    the transcript column folded (#718), and asked them to end where its
+    fold button ends: `--fold-in` from the window's edge, open or folded,
+    on every tab. And every bar with buttons is the tab row's height
+    (#720): the Files bar stood 47 px tall and the Review bar 43, so a
+    switch between the tabs moved the column's head."""
+    look = """() => {
+      const at = (sel) => { const e = document.querySelector(sel);
+        return e ? e.getBoundingClientRect() : null; };
+      const bar = at('.diffbar') || at('.filebody > .where');
+      return {jump: Math.round(at('#jump').right), fold: Math.round(at('#chatfold').right),
+              tabs: Math.round(at('.tabs').height), bar: Math.round(bar.height),
+              head: Math.round(at('#chat > .chathead').height),
+              find: Math.round(at('.content .side > .findslot').height),
+              sessions: Math.round(at('.sidebar .findslot').height)};
+    }"""
+    with opened(repo_page) as page:
+        page.wait_for_selector("#jump:not([hidden])")
+        right = page.evaluate("Math.round(document.getElementById('jump')"
+                              ".getBoundingClientRect().right)")
+        seen = []
+        for tab in ("files", "diff"):
+            show_tab(page, tab)
+            page.wait_for_selector(".diffbar" if tab == "diff" else ".filebody > .where")
+            for _ in range(2):
+                was = page.evaluate("document.body.classList.contains('sidechat')")
+                page.click("#chatfold")
+                page.wait_for_function(
+                    "(was) => document.body.classList.contains('sidechat') !== was", arg=was)
+                seen.append(page.evaluate(look))
+        for one in seen:
+            assert one["jump"] == one["fold"] == right, seen
+            assert one["tabs"] == one["bar"] == one["head"] == one["find"] == 40, seen
+            assert one["sessions"] == 40, seen
+
+
+def test_a_folded_list_says_what_it_holds(repo_page):
+    """Folded, a list was a button alone (#719): the reader asked for its
+    name, read up the strip, as the folded transcript column says
+    "Transcript". A click on the word opens the list, as the button does."""
+    with opened(repo_page) as page:
+        page.wait_for_function("state.sessions.length > 0")
+        assert page.locator(".content .side > .foldword").is_hidden()
+        page.click(".content .side .fold")
+        page.wait_for_function("document.body.classList.contains('foldlist')")
+        words = {}
+        for tab in ("transcript", "files", "diff"):
+            show_tab(page, tab)
+            page.wait_for_selector(".content .side > .foldword")
+            words[tab] = page.locator(".content .side > .foldword").inner_text()
+        assert words == {"transcript": "Turns", "files": "Files", "diff": "Changed files"}
+        # Under the button, and read upwards, as the strip's other word.
+        place = page.evaluate("""() => {
+          const at = (sel) => document.querySelector(sel).getBoundingClientRect();
+          const word = document.querySelector('.content .side > .foldword');
+          return {under: at('.content .side > .foldword').top
+                         >= at('.content .side .fold').bottom,
+                  turned: getComputedStyle(word).transform !== 'none',
+                  chat: getComputedStyle(document.querySelector('#chat .chatword'))
+                        .transform === getComputedStyle(word).transform};
+        }""")
+        assert place == {"under": True, "turned": True, "chat": True}, place
+        # The list's count stays where `split` hands it back.
+        assert page.locator(".content .side > .listnote").count() == 1
+        page.click(".content .side > .foldword")
+        page.wait_for_function("!document.body.classList.contains('foldlist')")
+        assert page.locator(".content .side > .foldword").is_hidden()
+
+
 def test_the_transcript_column_s_head_lines_up_with_the_bars_beside_it(repo_page):
     """The rule under the column's head stood a few pixels above the rule
     under the commit picker beside it (#625). It lines up with the bar of
