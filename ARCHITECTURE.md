@@ -52,12 +52,15 @@ run `make`. It has waited for twenty minutes. Agent five asked you a question
 an hour ago. Agent one finished long ago and has nothing to do.
 
 A terminal is a good place to type. It is a bad place to *read*, and a very bad
-place to *watch five things at once*. wostuast is the reading side. It is one
-page in your browser. The page tells you:
+place to *watch five things at once*. wostuast is where you watch and steer
+them. It is one page in your browser. The page tells you:
 
 - which agent needs you, and why;
 - what each agent said, as real Markdown;
-- what each agent changed, as a diff you can review.
+- what each agent changed, as a diff you can review;
+- what each agent cost.
+
+From the page you answer, review and send. The agents still run in tmux.
 
 *"Wos tuast?"* is Austrian for *"what are you doing?"*. That is the one
 question this program asks, again and again, of every agent you run.
