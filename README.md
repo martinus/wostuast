@@ -15,7 +15,7 @@
 
 ![The wostuast page: the sessions on the left, grouped by who needs you, and one agent's conversation with its plan on the right](docs/cover.png)
 
-<sub>Made-up sessions, drawn by `python3 tests/tour.py out --view transcript --height 860`.</sub>
+<sub>Made-up sessions, drawn by `python3 tests/tour.py out --view transcript --height 980`.</sub>
 
 </div>
 
@@ -46,6 +46,9 @@ the right window.
   as Markdown. A long run of tool calls is one line. You search every
   session, keep any message for later, and catch up on all unread answers in
   one scroll.
+- **What it cost.** This session and the whole month, side by side: where
+  the money and the time went, and what could be cheaper. One click turns
+  it into a prompt that asks an agent how to cut the cost.
 - **Local only.** One page on `127.0.0.1`. Nothing leaves your machine. On
   Linux the page answers only you: another account on the machine gets
   nothing. Use it from another computer through an SSH tunnel.
@@ -94,6 +97,7 @@ details.
 | **Transcript** | What the agent said and did, with a map of the conversation beside it. Answer, say Yes or No, and send from here. |
 | **Files** | Every file in the worktree as a tree, with go-to-file. A funnel shows only what changed. |
 | **Review** | The diff, file by file and commit by commit. Click the `+` beside a line to comment, then send the review to the agent. |
+| **Statistics** | This session and the month: the cost, where it went, what could be cheaper. Copy it as a prompt for an agent. |
 | **Unread, Saved, Search, Commands** | The last answer of every unread session; the messages you kept; a search of every session; every skill and command your sessions can run. |
 | **`wostuast ls`, `wostuast wait`** | The sessions in a terminal, or as JSON for a script; wait until a session is done. |
 
