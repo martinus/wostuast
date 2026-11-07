@@ -22,10 +22,11 @@
 ---
 
 You run several Claude Code agents, one per tmux window. A terminal is a good
-place to type and a bad place to read. **wostuast is the reading side.** It is
-one page in your browser. It tells you which agent needs you, what each agent
-said, and what each agent changed. And it lets you answer, without a hunt for
-the right window.
+place to type, and a bad place to keep track of many agents. **wostuast is
+where you watch and steer them.** It is one page in your browser. It shows
+which agent needs you, what each one said, changed and cost. You answer,
+review and send from the page, without a hunt for the right window. The agents
+still run in tmux.
 
 ## Why wostuast
 
