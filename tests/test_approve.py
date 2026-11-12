@@ -280,10 +280,11 @@ def hook_at(ws, tmp_path):
         fcntl.flock(lock, fcntl.LOCK_EX)
         held.append(lock)
 
-    def start(tool: str = "Bash", suggestions=None) -> subprocess.Popen:
+    def start(tool: str = "Bash", suggestions=None, **extra) -> subprocess.Popen:
         payload = json.dumps(conftest.bare_event("PermissionRequest", tool_name=tool,
                                                  tool_input={"command": "rm -rf build"},
-                                                 permission_suggestions=suggestions or []))
+                                                 permission_suggestions=suggestions or [],
+                                                 **extra))
         child = subprocess.Popen([str(folder / "claude"), str(folder / "stand_in.py"),
                                   "terminal", str(path)], stdin=subprocess.PIPE,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -363,6 +364,23 @@ def test_a_question_or_a_plan_is_never_waited_on(ws, hook_at, tool):
     child = start(tool)
     assert finish(child) == (0, "", "")
     assert logged_ask(ws) == ""
+
+
+def test_in_auto_mode_the_hook_does_not_wait(ws, hook_at):
+    """Auto mode shows no dialog until the hook returns (2.1.322): a hook
+    that waited for the page held it away from the terminal for
+    `APPROVE_WAIT`. So it returns at once, silent, with no nonce, and the
+    page offers no Yes. Default mode still waits."""
+    daemon, start = hook_at
+    daemon()
+    child = start(permission_mode="auto")
+    assert finish(child) == (0, "", "")
+    assert logged_ask(ws) == ""
+    child = start(permission_mode="default")
+    assert until(lambda: logged_ask(ws) and ws.hook_waits(logged_ask(ws))), \
+        "the hook did not wait in default mode"
+    os.killpg(child.pid, signal.SIGTERM)
+    child.wait(timeout=10)
 
 
 def test_with_no_daemon_the_hook_does_not_wait(ws, hook_at):

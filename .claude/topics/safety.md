@@ -22,7 +22,12 @@ path may reach. The rest: topics/safety-typing, topics/safety-install.
   Escape there stops the hook (2.1.292, `tests/fixtures/README.md`).
   **It waits only while a daemon runs** (`daemon_running`), at most
   `APPROVE_WAIT`, **never for a question or a plan** (`NOT_APPROVED`):
-  each would hold a process for nothing.
+  each would hold a process for nothing. **Nor in auto mode**
+  (`HIDES_DIALOG`, `permission_mode`): on 2.1.322 it shows no dialog until
+  the hook returns, so a waiting hook held the terminal for `APPROVE_WAIT`
+  ("running PermissionRequest hook"). The reader chose no wait there: no
+  nonce, so the page offers No and the jump, not Yes.
+  `test_in_auto_mode_the_hook_does_not_wait`.
   **"Yes, and don't ask again" sends Claude Code's own suggestion, picked
   by its place, never a rule of ours** (`always_offered`, `allow_for`,
   `always_label`): the reader asked for the CLI's choices. The page sends

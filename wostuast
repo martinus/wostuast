@@ -622,8 +622,9 @@ def write_atomic(path: Path, text: str, private: bool = False,
 
 
 #: How long a `PermissionRequest` hook waits for a Yes from the page, in
-#: seconds. It holds no terminal while it waits: measured on 2.1.286 and
-#: 2.1.292, the dialog is on screen as without the hook, and an answer in the
+#: seconds. It holds no terminal while it waits, outside auto mode
+#: (`HIDES_DIALOG`): measured on 2.1.286, 2.1.292 and 2.1.322, the dialog is
+#: on screen as without the hook, and an answer in the
 #: terminal stops the hook at once. Measured on 2.1.292, a hook with no
 #: `timeout` of its own was still waited for at 90 s; if Claude Code stops
 #: it sooner, its lock goes with it and the page's Yes goes away.
@@ -635,6 +636,15 @@ APPROVE_POLL = 0.2
 #: Dialogs the page never says Yes to: a question has its own answers
 #: (`answer`), and a plan is approved in the terminal, where its options are.
 NOT_APPROVED = frozenset({"AskUserQuestion", "ExitPlanMode"})
+
+#: The modes in which Claude Code shows no dialog until the hook returns:
+#: measured on 2.1.322, auto mode calls the hook with no
+#: `permission_suggestions` and the terminal reads "running
+#: PermissionRequest hook", so a hook waiting for the page held the dialog
+#: away from the terminal for `APPROVE_WAIT`. The reader chose no wait there:
+#: the dialog shows at once, and the page offers No and the jump, not Yes.
+#: Default mode still shows the dialog while the hook waits (2.1.322).
+HIDES_DIALOG = frozenset({"auto"})
 
 #: The one thing the hook ever prints: Claude Code's "allow" for the
 #: dialog the hook was called for, read off 2.1.292's own schema.
@@ -13581,7 +13591,8 @@ def cmd_hook(args: argparse.Namespace) -> int:
             # its line of the log: the daemon names it in the Yes, and no
             # other dialog's hook waits for that name (`wait_for_yes`).
             asks = (record.get("hook_event_name") == "PermissionRequest"
-                    and record.get("tool_name") not in NOT_APPROVED)
+                    and record.get("tool_name") not in NOT_APPROVED
+                    and record.get("permission_mode") not in HIDES_DIALOG)
             if asks:
                 record["ask_id"] = os.urandom(8).hex()
             note_agent(record)
@@ -15068,7 +15079,7 @@ HOOK_PARTS = frozenset({
     "archive_log", "to_int", "process_name", "process_args", "process_argv",
     "background_start", "parent_pid",
     "looks_like_claude", "agent_pid", "claude_from", "reads_terminal", "give_up_after", "stand_down",
-    "read_stdin_json", "cmd_hook", "note_agent", "APPROVE_WAIT", "APPROVE_POLL", "NOT_APPROVED",
+    "read_stdin_json", "cmd_hook", "note_agent", "APPROVE_WAIT", "APPROVE_POLL", "NOT_APPROVED", "HIDES_DIALOG",
     "ALLOW", "approvals_dir", "daemon_lock_path", "lock_held", "daemon_running",
     "wait_for_yes", "ALWAYS_MODES", "always_offered", "allow_for",
 })
