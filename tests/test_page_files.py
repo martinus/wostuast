@@ -311,9 +311,10 @@ def test_the_dot_appears_when_a_quiet_file_is_touched(repo_page):
         assert names[0] == "CLAUDE.md", "it should not have moved"
 
 
-def test_a_worktree_without_markdown_says_so(page_at):
-    with opened(page_at) as page:
+def test_a_worktree_without_markdown_says_so(repo_page):
+    with opened(repo_page) as page:
         show_tab(page, "files")
+        page.evaluate("state.files.names = []; state.files.path = null; draw()")
         assert "no file that git knows about" in \
             page.locator(".filebody").inner_text()
 
@@ -331,10 +332,21 @@ def test_git_failing_does_not_read_as_an_empty_worktree(repo_page):
         assert "holds no file" not in said
 
 
-def test_a_directory_that_is_not_a_repository_says_so(page_at):
+def test_a_directory_that_is_not_a_repository_says_so(page_at, tmp_path):
+    """A session started outside git still shows its folder's files: it
+    showed none, and the reader could neither browse the tree nor read a
+    file. The Review tab says it has nothing to review."""
+    (tmp_path / "notes.md").write_text("# notes\n\nplain\n")
     with opened(page_at) as page:
+        show_tab(page, "files")
+        page.click(".filelist button:has-text('notes.md')")
+        page.wait_for_function(
+            "document.querySelector('.filebody')?.textContent.includes('plain')")
+        page.evaluate("state.files.names = []; state.files.path = null; draw()")
+        assert "This folder holds no file." in page.locator(".filebody").inner_text()
         show_tab(page, "diff")
-        assert "no branch to compare" in page.locator(".diffbody").inner_text()
+        page.wait_for_function(
+            "document.querySelector('.diffbody')?.textContent.includes('no git repository')")
         assert page.locator("#diffcount").is_hidden()
 
 

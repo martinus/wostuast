@@ -319,7 +319,11 @@ path may reach. The rest: topics/safety-typing, topics/safety-install.
     agents' panes. **In a `plain` one there is no `is_listed`**, so
     `worktree_target(plain=True)` checks `inside` and `.git` alone, and
     `inside` catches `ValueError`: a NUL in a name raised, where git
-    refused it before.
+    refused it before. **A session started outside git has its start
+    folder as a `plain` own place, through the same `added_folder`**
+    (`own_place`): the reader asked to browse and read it, and the agent
+    in it reads it already. A folder `added_folder` refuses stays as it
+    was, with no files.
     - **No git directory, no system tree, and only as it was kept**
       (`is_git_dir`, `SYSTEM_TREES`, `plain_root`): a review agent added
       `repo/.git`, and a bare repository, which has no `.git` in its name,

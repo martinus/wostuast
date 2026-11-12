@@ -6784,13 +6784,15 @@ class Files:
         are in no repository (`~/.claude`, `/tmp`), and each request that
         names a place asked git about every one again: up to `DIRS_HELD`
         processes a poll. A no is kept for `NO_REPO_KEPT`, not for ever: a
-        `git init` makes a repository, and a call that failed is no answer."""
+        `git init` makes a repository, and a call that failed is no answer,
+        so it is None and not kept: a session's own folder is walked as
+        `plain` only on a no (`own_place`)."""
         now = time.time()
         with self.lock:
             if now - self.no_roots.get(folder, 0.0) < NO_REPO_KEPT:
-                return None
+                return ""
         found = self.root_of(folder, runner)
-        if not found:
+        if found == "":
             with self.lock:
                 self.no_roots = {one: at for one, at in self.no_roots.items()
                                  if now - at < NO_REPO_KEPT}
@@ -12630,9 +12632,9 @@ class Serving:
         keeps that no a while. Only `rev-parse` runs here: it reads no
         config that runs a command, and `status` runs only once the reader
         picks a place."""
-        own = self.own_place(session)
+        own, plain = self.own_place(session)
         out = [{"path": own, "name": os.path.basename(own.rstrip("/")) or own,
-                "own": True}]
+                "own": True, "plain": plain}]
         seen = {own}
         for folder in sorted(session.dirs, key=session.dirs.__getitem__, reverse=True):
             if len(out) >= PLACES_SHOWN:
@@ -12655,14 +12657,25 @@ class Serving:
                         "plain": self.daemon.files.root_kept(folder, run) != folder})
         return out
 
-    def own_place(self, session: Session) -> str:
-        """The session's own repository: the one the agent stands in, else
-        the one it started in, else where it stands. `cwd` follows the
+    def own_place(self, session: Session) -> tuple[str, bool]:
+        """The session's own repository, and whether it is `plain`: the one
+        the agent stands in, else the one it started in. `cwd` follows the
         agent, and a `cd` out of every repository left the Files and
-        Review tabs empty although the picker named the session's own."""
+        Review tabs empty although the picker named the session's own.
+
+        In no repository at all, the folder it started in is its own, walked
+        as a folder the reader added is (#624), with the same checks
+        (`added_folder`): a session started outside git showed no file. Only
+        when git said no for both: a git that did not answer is no answer,
+        and a repository walked as a plain folder lost its changes."""
         files = self.daemon.files
-        return (files.root_kept(session.cwd, run) or files.root_of(session.home, run)
-                or session.cwd)
+        start = session.home or session.cwd
+        roots = [files.root_kept(session.cwd, run), files.root_kept(start, run)]
+        root = next((one for one in roots if one), "")
+        if root or None in roots:
+            return root or session.cwd, False
+        folder, why = added_folder(start)
+        return (session.cwd, False) if why else (folder, True)
 
     def home_place(self, session: Session) -> str:
         """The worktree the session started in, which the folders the reader
@@ -12680,7 +12693,7 @@ class Serving:
         opened unless it is one the session already holds."""
         wanted = query.get("place", "")
         if not wanted:
-            return self.own_place(session), False
+            return self.own_place(session)
         return next(((one["path"], bool(one.get("plain"))) for one in self.places_for(session)
                      if one["path"] == wanted), None)
 
@@ -13011,8 +13024,15 @@ def verb_diff(serving: Serving, session_id: str, session: Session,
     # The base the reader picked, used only if git lists that name.
     base = query.get("base", "")
     at = serving.place_of(session, query)
-    if at is None or at[1]:
-        serving.refuse(session_id, 404, NOT_A_REPOSITORY if at else NOT_A_PLACE)
+    if at is None:
+        serving.refuse(session_id, 404, NOT_A_PLACE)
+        return
+    if at[1]:
+        # A folder git knows nothing of (#624) has no diff, and says so as a
+        # report: a session's own one is asked before the page knows it is
+        # plain, and a 404 left the tab blank until the next poll.
+        serving.reply_json({"id": session_id, "plain": True,
+                            "sections": [], "untracked": []})
         return
     place = at[0]
     report = worktree_diff(place, of=of, base=base,
@@ -25345,6 +25365,7 @@ function putNoFile(pane) {
         + " few seconds."
       : state.files.names.length
       ? "Pick a file on the left, or type to find one."
+      : placePlain() ? "This folder holds no file."
       : "This worktree holds no file that git knows about.");
     return true;
   }
@@ -28627,9 +28648,11 @@ function drawPlaces() {
   if (away) $("placeadd").hidden = true;
 }
 
-// Whether the place picked is a folder git knows nothing of (#624).
+// Whether the place picked is a folder git knows nothing of (#624): an
+// added one, or the session's own when it started outside git. The own one
+// is picked as "", as the picker's option holds it.
 function placePlain() {
-  const one = state.places.find((place) => !place.own && place.path === state.place);
+  const one = state.places.find((place) => (place.own ? "" : place.path) === state.place);
   return !!(one && one.plain);
 }
 
