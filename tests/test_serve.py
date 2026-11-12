@@ -801,7 +801,7 @@ def test_another_repository_the_agent_worked_in_is_a_place_of_its_own(ws, served
     status, body = get(f"{base}/api/session/s1/places")
     assert status == 200
     assert body["places"] == [
-        {"path": str(repo), "name": "myrepo", "own": True},
+        {"path": str(repo), "name": "myrepo", "own": True, "plain": False},
         {"path": str(other), "name": "other", "own": False}]
     # A folder in no repository is not asked about again each request: up
     # to `DIRS_HELD` processes a poll.
@@ -897,9 +897,8 @@ def test_a_folder_the_reader_added_is_a_place_git_need_not_know(ws, served, repo
         with pytest.raises(urllib.error.HTTPError) as answer:
             get(f"{base}/api/session/s1/file?path={urllib.parse.quote(wrong)}&place={place}")
         assert answer.value.code == 404, wrong
-    with pytest.raises(urllib.error.HTTPError) as answer:
-        get(f"{base}/api/session/s1/diff?place={place}")
-    assert answer.value.code == 404
+    status, body = get(f"{base}/api/session/s1/diff?place={place}")
+    assert status == 200 and body["plain"] is True and body["sections"] == [], body
     # The folders belong to the worktree the session started in, wherever
     # the agent stands now.
     ws.append_event(event("PreToolUse", cwd=str(other), ts=time.time(),
@@ -929,6 +928,55 @@ def test_a_folder_the_reader_added_is_a_place_git_need_not_know(ws, served, repo
     with pytest.raises(urllib.error.HTTPError) as answer:
         get(f"{base}/api/session/s1/files?place={place}")
     assert answer.value.code == 404
+
+
+def test_a_session_started_outside_git_has_its_folder_as_its_own_place(ws, served, tmp_path,
+                                                                      monkeypatch):
+    """A session started in a folder git knows no repository for showed no
+    file. Its folder is its own place, walked as a folder the reader added
+    (#624): listed, read and checked the same way, with no diff to review.
+    Only on git's no: a git that did not answer leaves it as it was, as a
+    repository walked as a plain folder loses its changes."""
+    daemon, base = served
+    start = tmp_path / "notes"
+    (start / "sub").mkdir(parents=True)
+    (start / "plan.md").write_text("# plan\n")
+    (start / "sub" / "a.txt").write_text("a\n")
+    (start / ".git").mkdir()
+    (tmp_path / "secret.txt").write_text("secret\n")
+    ws.append_event(event("SessionStart", cwd=str(start), ts=time.time()))
+    # The agent stands in a folder of it: the folder it started in is still
+    # its own.
+    ws.append_event(event("PreToolUse", cwd=str(start / "sub"), ts=time.time(),
+                          tool_name="Bash", tool_input={"command": "ls"}))
+    daemon.store.refresh()
+    real = str(start.resolve())
+    status, body = get(f"{base}/api/session/s1/places")
+    assert body["places"] == [{"path": real, "name": "notes", "own": True, "plain": True}], body
+    status, body = get(f"{base}/api/session/s1/files")
+    assert status == 200 and body["plain"] is True and body["root"] == real, body
+    assert sorted(body["names"].split("\0")) == ["plan.md", "sub/a.txt"]
+    status, body = get(f"{base}/api/session/s1/file?path=sub/a.txt")
+    assert body["text"] == "a\n"
+    for wrong in ("../secret.txt", str(tmp_path / "secret.txt"), ".git/HEAD"):
+        with pytest.raises(urllib.error.HTTPError) as answer:
+            get(f"{base}/api/session/s1/file?path={urllib.parse.quote(wrong)}")
+        assert answer.value.code == 404, wrong
+    status, body = get(f"{base}/api/session/s1/diff")
+    assert status == 200 and body["plain"] is True and body["sections"] == [], body
+    # A git that does not answer is no "no".
+    fresh = ws.Files()
+    monkeypatch.setattr(daemon, "files", fresh)
+    monkeypatch.setattr(fresh, "root_of", lambda folder, runner: None)
+    status, body = get(f"{base}/api/session/s1/places")
+    assert body["places"][0]["plain"] is False, body
+    # Nor is a folder a reader could not add.
+    monkeypatch.setattr(fresh, "root_of", lambda folder, runner: "")
+    ws.append_event(event("SessionStart", sid="s2", cwd="/proc", ts=time.time()))
+    daemon.store.refresh()
+    status, body = get(f"{base}/api/session/s2/places")
+    assert body["places"] == [{"path": "/proc", "name": "proc", "own": True,
+                               "plain": False}], body
 
 
 def test_a_folder_too_deep_or_too_wide_is_walked_within_bounds(ws, tmp_path):

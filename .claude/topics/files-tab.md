@@ -25,7 +25,15 @@ The listing and the tree, find, icons, hex, and how a file is drawn.
   - **The own place is the repository the agent stands in, else the one it
     started in** (`own_place`): the tabs read `cwd` before #616, and a `cd`
     out of every repository left them empty under a picker that named the
-    own one.
+    own one. **In no repository at all, the own place is the folder the
+    session started in, `plain`** (`own_place`, `placePlain`): a session
+    started outside git showed no file. It is walked and read as a folder
+    the reader added, with `added_folder`'s checks, and the Review tab gets
+    a `plain` report, not a 404, as it asks before the page knows the
+    places. **Only on git's no**: a git that did not answer leaves it as
+    it was, as a repository walked plain lost its changes.
+    `test_a_session_started_outside_git_has_its_folder_as_its_own_place`,
+    `test_a_directory_that_is_not_a_repository_says_so`.
   - **A pick drops what was held and draws at once** (`pickPlace`), as a
     change of session does: the old listing stood under the new name until
     the answer came. **An answer asked under another place is dropped**
@@ -59,6 +67,8 @@ The listing and the tree, find, icons, hex, and how a file is drawn.
   - **A folder in no repository is asked about once a minute**
     (`Files.root_kept`, `NO_REPO_KEPT`): each request that named a place
     asked git about all of them, up to `DIRS_HELD` processes a poll.
+    **A no is kept and gives "", a git that did not answer is None and is
+    not kept**: `own_place` walks a folder plain only on a no.
   `test_another_repository_the_agent_worked_in_is_a_place_of_its_own`,
   `test_the_folders_an_agent_worked_in_are_kept_the_latest_last`,
   `test_another_repository_the_agent_worked_in_is_one_pick_away`.
