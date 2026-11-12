@@ -949,6 +949,12 @@ for the dialog waits for your Yes, and Claude Code takes its answer for that
 dialog only. If you answer in the terminal first, the hook stops, and **yes**
 goes away. It is not offered for a plan or a question.
 
+It is not offered in auto mode either. There, Claude Code shows no dialog in
+the terminal until the hook returns, so a hook that waits for the page holds
+your terminal. In auto mode the hook returns at once: the dialog shows in the
+terminal, and you answer it there. The page still shows the request, its
+**No**, and the jump to the pane.
+
 It can **decline** one. The page shows the whole request, and **no** presses
 Escape in the agent's pane. You write what the agent should do instead, and
 wostuast types it only after it has seen the dialog close, in the transcript.

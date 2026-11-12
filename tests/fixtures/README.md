@@ -99,6 +99,17 @@ interrupted the call and stopped the hook (its log has a start and no end);
 and a hook with no `timeout` of its own was still waited for at 90 s, and its
 allow then worked.
 
+**Auto mode is different** (2.1.322). In default mode the dialog is still on
+screen while a `PermissionRequest` hook waits, with "Yes, and don't ask again
+for: curl \*" and "Yes, and switch to auto mode" (measured with
+`tests/claude_pane.py` and a hook that sleeps 25 s). In auto mode a reader's
+log shows the hook called with `permission_mode: auto` and no
+`permission_suggestions` key, and their terminal showed only "running
+PermissionRequest hook" and no dialog until the hook returned. Not measured
+here: auto mode's check runs on Anthropic's server, which the fake API does
+not pass; then Claude Code asks with a "No / Yes" dialog of its own and runs
+no `PermissionRequest` hook.
+
 A `PermissionRequest` carries `permission_suggestions`, which are the CLI's
 "Yes, and ..." options (`permission_suggestions.json`, measured on 2.1.292,
 the paths invented): `npm test -- --watch=false` suggests `addRules`
