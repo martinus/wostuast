@@ -2024,10 +2024,12 @@ def test_the_last_tabs_poll_does_not_fetch_the_transcript_again(page_at):
         assert count == 1, f"{count} transcript fetches for one click"
 
 
-def test_a_load_that_ends_after_the_switch_sets_no_timer(page_at):
+def test_a_load_that_ends_after_the_switch_sets_no_timer(page_at, tmp_path):
     """A Files load still out when the reader moved on ran `repoll` on its
     way out, and armed the next tab's timer: the Review tab's poll then
-    fired while its own first fetch was still on its way, and asked twice."""
+    fired while its own first fetch was still on its way, and asked twice.
+    In a repository: a folder outside git has no diff to ask for."""
+    conftest.git_in(tmp_path, "init", "-q", "-b", "main")
     daemon, path = page_at
     with opened(path) as page:
         wait_for_map(page)
