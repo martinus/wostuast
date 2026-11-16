@@ -63,6 +63,12 @@ Comments are topics/review; git is topics/git.
   removed and lines added, and an edit made on the way was one line among
   two hundred. git's `--color-moved` works only on coloured output. The
   reader chose the violet ground and bar from pictures.
+  - **Each pair carries its move, and the row drawers only draw it**
+    (`pairRun`, then `unifiedRow` and `pairRow`): the Files tab and a
+    tool's diff draw rows too, and have no moves. A moved-in line's left
+    half is a row of the other end, and a lookup by its number found
+    another line of this file. **`findMoves` searches once for each
+    answer** (`MOVES_FOUND`): a key in the find box draws again.
   - **A block is at least `MOVED_LINES` lines alike, but for the indent,
     with `MOVED_LETTERS` letters and digits**: fewer is chance. A line
     edited on the way may stand inside it (`wordDiff`), never more than
