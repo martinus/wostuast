@@ -2270,6 +2270,12 @@ def moves_in(page, path):
         plain: [...file.querySelectorAll(
             '.dline.removed, .dline.added, .half.removed, .half.added')]
           .filter((one) => !one.matches('.moved, .movededit')).map(text),
+        // In two columns: each moved row's halves, number, text and words.
+        pairs: [...file.querySelectorAll('.dline.pair')]
+          .filter((row) => row.querySelector('.moved, .movededit'))
+          .map((row) => [...row.querySelectorAll('.half')].map((half) => [
+            half.querySelector('.ln').textContent, text(half),
+            [...half.querySelectorAll('.wd')].map((word) => word.textContent)])),
       };
     }""", path)
 
@@ -2309,16 +2315,7 @@ def test_in_two_columns_a_moved_line_stands_beside_the_line_it_was(repo_page, ws
     move_a_block(root)
     with opened(repo_page, tab="diff") as page:
         page.wait_for_selector(UNCOMMITTED + " .dline.pair .half.was.moved")
-        pairs = page.evaluate("""() => {
-          const file = [...document.querySelectorAll('.diffhead.uncommitted ~ .dfile')]
-            .find((one) => one.querySelector('.path').textContent === 'code.py');
-          return [...file.querySelectorAll('.dline.pair')]
-            .filter((row) => row.querySelector('.moved, .movededit'))
-            .map((row) => [...row.querySelectorAll('.half')].map((half) => [
-              half.querySelector('.ln').textContent,
-              half.querySelector('.dtext').textContent,
-              [...half.querySelectorAll('.wd')].map((word) => word.textContent)]));
-        }""")
+        pairs = moves_in(page, "code.py")["pairs"]
         went = moves_in(page, "lib.py")
     assert len(pairs) == 10
     assert pairs[0] == [["4", "def ring_drops(ring):", []],

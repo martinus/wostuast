@@ -17,6 +17,12 @@ from browser import skip_without_browser
 HERE = Path(__file__).resolve().parent
 
 
+def git_out(repo: Path, *args: str) -> str:
+    """What git printed, run in `repo`."""
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True,
+                          text=True, check=True).stdout
+
+
 def test_the_tools_write_nothing_outside_their_own_home(tmp_path, monkeypatch):
     """`stage.serve`, `shot.serve`, `tour.make_sessions` and `scale.measure`, called by a
     script rather than by their `main`, keep to the home they are given: a
@@ -52,9 +58,7 @@ def test_the_repository_can_end_in_a_merge_settled_by_hand(tmp_path):
     was settled by hand, so what it changed by hand is `ring.c` alone."""
     repo = tmp_path / "proj"
     stage.make_repo(repo, merge=True)
-    run = lambda *args: subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True,
-        check=True).stdout
+    run = lambda *args: git_out(repo, *args)
     assert len(run("log", "-1", "--format=%P").split()) == 2
     assert run("log", "--reverse", "--format=%s", "main..feature").split("\n")[4:6] == [
         "Call the size a length", "Merge main: keep the length"]
@@ -66,9 +70,7 @@ def test_the_repository_can_end_in_a_merge_settled_by_hand(tmp_path):
 def test_the_repository_has_what_the_pictures_need(tmp_path):
     repo = tmp_path / "proj"
     stage.make_repo(repo)
-    run = lambda *args: subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True,
-        check=True).stdout
+    run = lambda *args: git_out(repo, *args)
     # Four commits on the branch, the oldest first as "N / 4" counts them,
     # and the second is the one with Markdown in its message.
     subjects = run("log", "--reverse", "--format=%s", "main..feature").split("\n")[:-1]
@@ -93,9 +95,7 @@ def test_the_repository_can_move_code_from_one_file_to_another(tmp_path):
     in the change not committed, one line edited on the way."""
     repo = tmp_path / "proj"
     stage.make_repo(repo, moved=True)
-    run = lambda *args: subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True,
-        check=True).stdout
+    run = lambda *args: git_out(repo, *args)
     assert run("status", "--porcelain").split("\n")[:-1] == [
         " M ring.c", " M ring_stats.c", "?? PLAN.md"]
     lines = lambda sign, path: [line[1:] for line in run(

@@ -18476,11 +18476,11 @@ mark { background: var(--mark); color: var(--bg); border-radius: 2px; padding: 0
   color: var(--moved-bar); background: var(--moved-line);
   border-top: 1px solid var(--edge);
 }
-.movednote button {
-  padding: 0; border: none; background: none; cursor: pointer;
-  font: inherit; color: inherit;
+.movednote .link {
+  margin: 0; font-size: inherit; color: inherit;
   text-decoration: underline; text-underline-offset: 2px;
 }
+.movednote .link:hover { color: var(--ink-bright); }
 .movednote .edits { color: var(--ink-soft); }
 .dfile > .name .movedsum {
   margin-left: 10px; font-family: var(--sans); font-size: 12px;
@@ -26617,7 +26617,7 @@ function landDiff(box) {
 // the blocks that moved to or from it** (`moves`), which are read off the
 // other files of the half: the other end of a block changed, and this end
 // kept its old marks.
-function blockSig(section, file, moves = null) {
+function blockSig(section, file, moves) {
   const key = moreKey(section.name, file.path);
   const whole = state.diffs.whole.get(key);
   return JSON.stringify([
@@ -26625,7 +26625,7 @@ function blockSig(section, file, moves = null) {
     state.diffs.open.get(key), BIG_LINES, state.diffs.more.get(key) || null,
     section.at_commit ? laterFile(file.path) : null,
     whole ? (whole.asking ? "?" : whole.file ? "+" : "-") : "",
-    moves ? moves.paths.get(file.path) || null : null,
+    (moves.paths.get(file.path) || { sig: null }).sig,
   ]);
 }
 
@@ -26763,7 +26763,8 @@ function drawDiffFile(pane, one, atHead = false, section = "", moves = null) {
   put(head, "span", "path", one.status === "renamed"
     ? one.old_path + " \u2192 " + one.path : one.path);
   putCounts(head, one);
-  if (moves) putMovedSum(head, moves.paths.get(one.path), one);
+  const share = moves ? moves.paths.get(one.path) || null : null;
+  if (share) putMovedSum(head, share, one);
   // The whole file, on the Files tab (#449): a diff shows the changes and
   // the lines round them, and a reader wants the rest now and then. Beside
   // the header and not in it, which is a button already.
@@ -26804,7 +26805,7 @@ function drawDiffFile(pane, one, atHead = false, section = "", moves = null) {
   const mark = () => { why.textContent = size + " lines" + (open ? "" : ", hidden"); };
   // With whatever the reader asked to see between the changes.
   const fill = () => fillDiffFile(
-    body, Object.assign(withMore(one, section), { moves }), atHead);
+    body, Object.assign(withMore(one, section), { moves: share }), atHead);
   if (open) fill();
   mark();
   head.addEventListener("click", () => {
@@ -26903,8 +26904,8 @@ function fillDiffFile(body, one, atHead = false) {
     painting.push(side);
     const pairs = pairsOf(hunk.rows, one);
     if (sides) {
-      for (const [left, right, words] of pairs) {
-        pairRow(lines, one, left, right, atHead, words, side);
+      for (const [left, right, words, mark] of pairs) {
+        pairRow(lines, one, left, right, atHead, words, side, mark);
       }
       continue;
     }
@@ -26912,13 +26913,18 @@ function fillDiffFile(body, one, atHead = false) {
     // ones -- and takes only the words from the pairs. Drawn pair by pair,
     // the old and new lines alternated, which no diff reader draws.
     const marks = new Map();
-    for (const [left, right, words] of pairs) {
+    const moved = new Map();
+    for (const [left, right, words, mark] of pairs) {
       if (left === right) continue;
       if (left) marks.set(left, words[0]);
       if (right) marks.set(right, words[1]);
+      // A line that moved in has a row of the other end on its left,
+      // which one column does not draw.
+      if (mark) moved.set(mark.end === "from" ? left : right, mark);
     }
     for (const row of hunk.rows) {
-      unifiedRow(lines, one, row, atHead, marks.get(row) || null, side);
+      unifiedRow(lines, one, row, atHead, marks.get(row) || null, side,
+                 moved.get(row) || null);
     }
   }
   // The lines after the last change, when there are any or might be.
@@ -26960,7 +26966,9 @@ function pairsOf(rows, one) {
 // order. A line that moved out stands alone, its words marked against
 // where it went; a line that moved in stands beside the line it was, from
 // wherever that was (`movedFrom`), so two columns show what it was there.
-// Paired in place with an unrelated line, either one read as an edit.
+// Paired in place with an unrelated line, either one read as an edit. Each
+// pair carries its move, which the row drawers only draw: the Files tab
+// and a tool's diff draw rows too, and have none.
 function pairRun(cut, add, one) {
   const pairs = [];
   let i = 0;
@@ -26971,15 +26979,15 @@ function pairRun(cut, add, one) {
     const went = left && moveOf(one, left);
     const came = !went && right && moveOf(one, right);
     if (went) {
-      pairs.push([left, null, [movedWords(went, left)[0], null]]);
+      pairs.push([left, null, [went.words[0], null], went]);
       i += 1;
     } else if (came) {
-      pairs.push([movedFrom(came), right, movedWords(came, right)]);
+      pairs.push([movedFrom(came), right, came.words, came]);
       j += 1;
     } else {
       const words = left && right
         ? wordDiff(left.line.text, right.line.text) : null;
-      pairs.push([left, right, words || [null, null]]);
+      pairs.push([left, right, words || [null, null], null]);
       if (left) i += 1;
       if (right) j += 1;
     }
@@ -27002,11 +27010,10 @@ function paints(side, row, cell, words) {
 // One row of one column: the numbers, the marker, the line, and the `+` a
 // comment starts from. The shape every test of the Files tab reads, and the
 // diff's own shape until the reader asks for two columns.
-function unifiedRow(lines, one, row, atHead, words, side) {
+function unifiedRow(lines, one, row, atHead, words, side, mark = null) {
   const { line, old, now } = row;
-  const mark = moveOf(one, row);
   if (mark && mark.first) putMoveNote(lines, mark, one);
-  const node = put(lines, "div", "dline " + line.kind + movedClass(mark, row));
+  const node = put(lines, "div", "dline " + line.kind + movedClass(mark));
   // The numbers in one span, lined up with spaces. The row is already
   // `white-space: pre` in a monospace face, so they stay in column
   // without a flex box and three elements around every line — a diff of
@@ -27031,18 +27038,14 @@ function unifiedRow(lines, one, row, atHead, words, side) {
 // right, a changed line beside what it became. A side with no line -- more
 // was added than removed -- is left empty rather than closed up, so the two
 // columns stay level all the way down.
-function pairRow(lines, one, left, right, atHead, words, side) {
+function pairRow(lines, one, left, right, atHead, words, side, mark = null) {
   const kind = !left ? "added" : !right ? "removed"
     : left === right ? "context" : "changed";
-  // A line that moved in has, on its left, the line it was: no line of
-  // this file, so the mark is read off the right.
-  const real = right && right !== left ? right : left;
-  const mark = moveOf(one, real);
   if (mark && mark.first) putMoveNote(lines, mark, one);
   const row = put(lines, "div", "dline pair " + kind);
   const half = (name, held, sideWords) => {
     const cell = put(row, "span", "half " + name + " "
-                     + (held ? held.line.kind + movedClass(mark, real) : "none"));
+                     + (held ? held.line.kind + movedClass(mark) : "none"));
     put(cell, "span", "ln", held ? String(name === "was" ? held.old : held.now)
                                  : "");
     const text = put(cell, "span", "dtext", held ? held.line.text : "");
@@ -27253,10 +27256,10 @@ function letterCount(text) {
   return text.replace(/[^\p{L}\p{N}]/gu, "").length;
 }
 
-// The key of one line of one file, removed or added, by its number on its
+// The key of one line of a file, removed or added, by its number on its
 // own side: the numbers are the same in `withMore`'s hunks.
-function moveKey(path, kind, line) {
-  return path + "\n" + kind + "\n" + line;
+function moveKey(kind, line) {
+  return kind + "\n" + line;
 }
 
 // A half's runs of changes, in order: each run's removed and added lines,
@@ -27273,22 +27276,29 @@ function changeRuns(files) {
       }
       if (!run) runs.push(run = { cut: [], add: [] });
       const removed = line.kind === "removed";
+      const key = line.text.trim();
       (removed ? run.cut : run.add).push({
-        path: one.path, kind: line.kind, line: removed ? old : now,
-        text: line.text, key: line.text.trim() });
+        path: one.path, line: removed ? old : now, text: line.text, key,
+        letters: letterCount(key) });
     });
   }
   return runs;
 }
 
-// Every block that moved within a half: `lines` holds each moved line by
-// `moveKey`, and `paths` each file's share, for its header and for
-// `blockSig`. A block is a run of added lines that is, but for the indent,
+// What `findMoves` found in each half's files, while that answer stands:
+// a key in the find box or a file opened draws again, over the same files.
+const MOVES_FOUND = new WeakMap();
+
+// Every block that moved within a half, as each file's share by its path:
+// its moved lines by `moveKey`, how many went and came, and what its
+// `blockSig` must hold. A block is a run of added lines that is, but for the indent,
 // a run of removed lines in another run of changes; an edit in place is no
 // move. Each removed line goes to one place at most, the first that takes
 // it in the tree's order.
 function findMoves(files, section) {
-  const found = { lines: new Map(), paths: new Map() };
+  if (MOVES_FOUND.has(files)) return MOVES_FOUND.get(files);
+  const found = { paths: new Map() };
+  MOVES_FOUND.set(files, found);
   const runs = changeRuns(files);
   const size = runs.reduce((sum, run) => sum + run.cut.length + run.add.length, 0);
   if (size > MOVES_MAX) return found;
@@ -27336,7 +27346,7 @@ function longestMove(run, at, places, used) {
       if (was.key === now.key) {
         alike += 1;
         length = n + 1;
-        count += letterCount(now.key);
+        count += now.letters;
         astray = 0;
       } else if (astray < 2 && wordDiff(was.text, now.text)) {
         astray += 1;
@@ -27361,44 +27371,40 @@ function keepMove(found, block, used, section) {
                              end: lines[lines.length - 1].line });
   const move = { from: span(was), to: span(now), edits, section };
   move.id = [move.from.path, move.from.start, move.to.path, move.to.start].join("\n");
+  // Which lines changed on the way, and their words as `[was, now]`: once,
+  // for both ends. The indent alone is no change.
+  const changed = was.map((line, n) => line.key === now[n].key ? null
+    : wordDiff(line.text, now[n].text) || [null, null]);
   for (const [end, mine, theirs] of [["from", was, now], ["to", now, was]]) {
+    const path = mine[0].path;
+    if (!found.paths.has(path)) {
+      found.paths.set(path, { out: 0, in: 0, sig: [], lines: new Map() });
+    }
+    const share = found.paths.get(path);
     mine.forEach((line, n) => {
       if (end === "from") used.add(line);
-      found.lines.set(moveKey(line.path, line.kind, line.line),
-                      { move, end, first: n === 0, other: theirs[n] });
+      share.lines.set(moveKey(end === "from" ? "removed" : "added", line.line), {
+        move, end, first: n === 0, other: theirs[n], edited: !!changed[n],
+        words: changed[n] || [null, null] });
     });
-    const path = mine[0].path;
-    if (!found.paths.has(path)) found.paths.set(path, { out: 0, in: 0, sig: [] });
-    const share = found.paths.get(path);
     share[end === "from" ? "out" : "in"] += mine.length;
     // The other end's text, as this end's marks and left half are drawn from it.
     share.sig.push([move.id, end, edits, theirs.map((line) => line.text)]);
   }
 }
 
-// The move a row of a file's diff is part of, or null.
+// The move a removed or added line of a file's diff is part of, or null.
 function moveOf(one, row) {
-  if (!one.moves || !row) return null;
+  if (!one.moves) return null;
   const kind = row.line.kind;
-  if (kind !== "removed" && kind !== "added") return null;
   return one.moves.lines.get(
-    moveKey(one.path, kind, kind === "removed" ? row.old : row.now)) || null;
+    moveKey(kind, kind === "removed" ? row.old : row.now)) || null;
 }
 
 // " moved" for a line that moved as it was, " movededit" for one changed
-// on the way, which keeps its red or green; the indent alone is no change.
-function movedClass(mark, row) {
-  if (!mark) return "";
-  return mark.other.key === row.line.text.trim() ? " moved" : " movededit";
-}
-
-// The words that changed on the way, as `[was, now]`, like `wordDiff`.
-function movedWords(mark, row) {
-  if (mark.other.key === row.line.text.trim()) return [null, null];
-  const words = mark.end === "from"
-    ? wordDiff(row.line.text, mark.other.text)
-    : wordDiff(mark.other.text, row.line.text);
-  return words || [null, null];
+// on the way, which keeps its red or green.
+function movedClass(mark) {
+  return !mark ? "" : mark.edited ? " movededit" : " moved";
 }
 
 // The line a moved line was, as a row: the left half beside it in two
@@ -27416,7 +27422,7 @@ function putMoveNote(lines, mark, one) {
   const note = put(lines, "div", "movednote");
   note.dataset.move = mark.move.id + "\n" + mark.end;
   put(note, "span", null, going ? "moved to" : "moved from");
-  const go = put(note, "button", null,
+  const go = put(note, "button", "link",
                  (there.path === one.path ? "" : there.path + ", ")
                  + "lines " + there.start + " to " + there.end);
   go.title = "go to the other end of the block";
@@ -27432,7 +27438,6 @@ function putMoveNote(lines, mark, one) {
 // `drawDiff` puts the reader's place back a frame from now.
 function goToMove(move, end) {
   const scroll = document.querySelector(".diffscroll");
-  if (!scroll) return;
   const want = move.id + "\n" + end;
   const find = () => [...scroll.querySelectorAll(".movednote")]
     .find((note) => note.dataset.move === want);
@@ -27447,15 +27452,12 @@ function goToMove(move, end) {
 
 // What of a file moved, in its header: "15 of 15 removed lines moved".
 function putMovedSum(head, share, one) {
-  if (!share) return;
   const said = [];
-  if (share.out) {
-    said.push(share.out + " of " + counted(one.removed, "removed line", "removed lines")
-              + " moved");
-  }
-  if (share.in) {
-    said.push(share.in + " of " + counted(one.added, "added line", "added lines")
-              + " moved here");
+  for (const [moved, all, kind, where] of [
+    [share.out, one.removed, "removed", "moved"],
+    [share.in, one.added, "added", "moved here"]]) {
+    if (moved) said.push(moved + " of " + counted(all, kind + " line", kind + " lines")
+                         + " " + where);
   }
   put(head, "span", "movedsum", said.join(", "));
 }

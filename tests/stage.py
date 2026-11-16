@@ -99,8 +99,10 @@ MOVED = (
     "/* How full the ring is, from 0 to 100. */\n"
     "int ring_fill(const struct ring *r)\n{\n\tif (r->capacity == 0) {\n"
     "\t\treturn 0;\n\t}\n\treturn r->size * 100 / r->capacity;\n}\n")
-STATS_KEPT = "int ring_empty(const struct ring *r)\n{\n\treturn r->size == 0;\n}\n"
-STATS = '#include "ring.h"\n\n' + MOVED + "\n" + STATS_KEPT
+#: What stays in `ring_stats.c` once they have moved.
+STATS_AFTER = ('#include "ring.h"\n\n'
+               "int ring_empty(const struct ring *r)\n{\n\treturn r->size == 0;\n}\n")
+STATS = STATS_AFTER.replace("\n\n", "\n\n" + MOVED + "\n", 1)
 NOTES = ["Return -1 here is fine, but say why in a comment.",
          "This loop reads past the end when the ring is full.\nCheck `r->size` first.",
          "Name this ring_drop, it drops the oldest item.",
@@ -148,7 +150,7 @@ def make_repo(repo: Path, merge: bool = False, moved: bool = False) -> None:
         body = merge_main(repo, body)
     tail = "\n/* not committed yet */\n"
     if moved:
-        (repo / "ring_stats.c").write_text('#include "ring.h"\n\n' + STATS_KEPT)
+        (repo / "ring_stats.c").write_text(STATS_AFTER)
         tail = "\n" + MOVED.replace("dropped", "refused") + tail
     (repo / "ring.c").write_text(body + tail)
     (repo / "PLAN.md").write_text(PLAN)
