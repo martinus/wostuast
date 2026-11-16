@@ -36,7 +36,10 @@ renames the size, and a merge of `main`, which renamed it too, settled by
 hand (#621); `--commit 6` is the merge. `--elsewhere` is a second
 repository, `api`, with one commit and one change, that the agent edited a
 file in: the picker beside the tabs names it (#616). Beside it, `notes`, a
-folder git knows nothing of, for the reader to add (#624). `--summary` gives
+folder git knows nothing of, for the reader to add (#624). `--moved` puts
+`ring_stats.c` on `main`, and moves two of its functions to the end of
+`ring.c` in the change not committed, one line edited on the way: the
+Review tab draws them as code that moved. `--summary` gives
 the session four turns that used something, a reply a call with its
 result in the context, their times, an Explore
 subagent and a status line that says what it cost, for the Statistics tab
@@ -89,6 +92,17 @@ MESSAGES = [
 ]
 PLAN = ("# The plan\n\nThe ring **refuses** a push when it is full.\n\n"
         "- `ring_push` returns `-1`\n- the caller decides\n")
+#: `ring_stats.c` on `main` with `--moved`, and the two functions that move.
+MOVED = (
+    "/* How many pushes the ring refused since it was made. */\n"
+    "int ring_drops(const struct ring *r)\n{\n\treturn r->dropped;\n}\n\n"
+    "/* How full the ring is, from 0 to 100. */\n"
+    "int ring_fill(const struct ring *r)\n{\n\tif (r->capacity == 0) {\n"
+    "\t\treturn 0;\n\t}\n\treturn r->size * 100 / r->capacity;\n}\n")
+#: What stays in `ring_stats.c` once they have moved.
+STATS_AFTER = ('#include "ring.h"\n\n'
+               "int ring_empty(const struct ring *r)\n{\n\treturn r->size == 0;\n}\n")
+STATS = STATS_AFTER.replace("\n\n", "\n\n" + MOVED + "\n", 1)
 NOTES = ["Return -1 here is fine, but say why in a comment.",
          "This loop reads past the end when the ring is full.\nCheck `r->size` first.",
          "Name this ring_drop, it drops the oldest item.",
@@ -101,7 +115,7 @@ def git(repo: Path, *args: str) -> None:
                    capture_output=True)
 
 
-def make_repo(repo: Path, merge: bool = False) -> None:
+def make_repo(repo: Path, merge: bool = False, moved: bool = False) -> None:
     """`main`, then `feature` four commits on, a change not committed, and a
     document nobody committed. Each commit adds one function, so a picked
     commit is a diff of one hunk and the whole branch is four."""
@@ -121,6 +135,8 @@ def make_repo(repo: Path, merge: bool = False) -> None:
     (repo / "docs" / "notes.md").write_text("# Notes\n")
     (repo / "logo.bin").write_bytes(bytes(range(256)) * 3)
     (repo / ".gitignore").write_text(".oa-implement/\n")
+    if moved:
+        (repo / "ring_stats.c").write_text(STATS)
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "Start the ring")
     git(repo, "checkout", "-qb", "feature")
@@ -132,7 +148,11 @@ def make_repo(repo: Path, merge: bool = False) -> None:
         git(repo, "commit", "-qam", message)
     if merge:
         body = merge_main(repo, body)
-    (repo / "ring.c").write_text(body + "\n/* not committed yet */\n")
+    tail = "\n/* not committed yet */\n"
+    if moved:
+        (repo / "ring_stats.c").write_text(STATS_AFTER)
+        tail = "\n" + MOVED.replace("dropped", "refused") + tail
+    (repo / "ring.c").write_text(body + tail)
     (repo / "PLAN.md").write_text(PLAN)
 
 
@@ -303,7 +323,7 @@ def make_spending(ws, transcript: Path, repo: Path) -> None:
 
 def serve(home: Path, commands: bool = False, merge: bool = False,
           elsewhere: bool = False, summary: bool = False,
-          fresh: bool = False) -> tuple[str, Path]:
+          fresh: bool = False, moved: bool = False) -> tuple[str, Path]:
     """A daemon with one session standing in the repository, in `home`."""
     import shutil
 
@@ -313,7 +333,7 @@ def serve(home: Path, commands: bool = False, merge: bool = False,
     isolate(home)
 
     repo = home / "proj"
-    make_repo(repo, merge)
+    make_repo(repo, merge, moved)
     folder = ws.settings_path().parent / "projects" / "-proj"
     folder.mkdir(parents=True)
     transcript = folder / "s1.jsonl"
@@ -395,6 +415,7 @@ def main(argv: list[str]) -> int:
     ask.add_argument("--elsewhere", action="store_true")
     ask.add_argument("--summary", action="store_true")
     ask.add_argument("--fresh", action="store_true")
+    ask.add_argument("--moved", action="store_true")
     # One list, so the steps run in the order they were written.
     for flag in ("click", "type", "keys", "eval"):
         ask.add_argument(f"--{flag}", dest="steps", action="append",
@@ -419,7 +440,7 @@ def main(argv: list[str]) -> int:
             json.dumps(json.loads(said.settings)), encoding="utf-8")
     sys.path.insert(0, str(HERE))
     url, _ = serve(home, said.commands, said.merge, said.elsewhere, said.summary,
-                   said.fresh)
+                   said.fresh, said.moved)
 
     from browser import DRAWN, WAIT, opened, show_tab
     wait = WAIT or 15000

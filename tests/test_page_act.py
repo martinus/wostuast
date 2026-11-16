@@ -1001,6 +1001,9 @@ def test_the_send_box_button_stops_only_a_working_agent_with_nothing_typed(ws, i
             time.sleep(0.05)
         # One Escape: the Enter before the click pressed nothing.
         assert conftest.pressed(seen) == ["Escape"], seen
+        # The daemon pressed Escape before it answered: wait for the answer,
+        # or the page closed first and the stop's last lines never ran.
+        page.wait_for_function("!sending.has(state.chosen)")
 
 
 def test_the_size_goes_when_the_send_box_empties(in_pane):

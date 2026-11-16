@@ -57,6 +57,38 @@ Comments are topics/review; git is topics/git.
   - **A word is split by code point** (`WORD` has the `u` flag), or a
     changed emoji is marked half.
     `test_an_emoji_that_changed_is_marked_whole`.
+- **Code that moved is drawn as a move, found by the page over the whole
+  half** (`findMoves`, `changeRuns`, `longestMove`, `pairRun`,
+  `.movednote`): git writes a block moved to another place as lines
+  removed and lines added, and an edit made on the way was one line among
+  two hundred. git's `--color-moved` works only on coloured output. The
+  reader chose the violet ground and bar from pictures.
+  - **Each pair carries its move, and the row drawers only draw it**
+    (`pairRun`, then `unifiedRow` and `pairRow`): the Files tab and a
+    tool's diff draw rows too, and have no moves. A moved-in line's left
+    half is a row of the other end, and a lookup by its number found
+    another line of this file. **`findMoves` searches once for each
+    answer** (`MOVES_FOUND`): a key in the find box draws again.
+  - **A block is at least `MOVED_LINES` lines alike, but for the indent,
+    with `MOVED_LETTERS` letters and digits**: fewer is chance. A line
+    edited on the way may stand inside it (`wordDiff`), never more than
+    two in a row or half as many as the lines alike. It keeps its red or
+    green, and its words are marked against the other end (`movededit`).
+    **An edit in place is no move**: lines removed and added in one run
+    of changes, as a block indented under a new `if`, stay red and green.
+    `test_lines_alike_by_chance_or_an_edit_in_place_are_no_move`,
+    `test_a_block_moved_to_another_file_is_drawn_as_a_move`.
+  - **In two columns a line that moved in stands beside the line it was**
+    (`movedFrom`), with that line's number where it stood; the reader
+    asked for it. Where the block went, it stands beside nothing.
+    `test_in_two_columns_a_moved_line_stands_beside_the_line_it_was`.
+  - **A file's moves are in its `blockSig`**: they are read off the other
+    files of the half, and a kept block still said one line had changed
+    after a second edit at the other end.
+    `test_a_change_at_one_end_of_a_block_is_shown_at_the_other`.
+  - **The note's button goes to the other end, and opens a shut file
+    first** (`goToMove`).
+    `test_a_click_on_where_a_block_went_opens_and_goes_to_its_other_end`.
 - **Lines hidden between changes come from the same diff with the whole
   file as context, never from the file on disk** (`whole_file_diff`,
   `WHOLE_CONTEXT`, the path a literal pathspec after `--`): the lines must
