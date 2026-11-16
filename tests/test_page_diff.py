@@ -2212,3 +2212,188 @@ def test_another_repository_keeps_its_answers_and_its_names_to_itself(
         page.evaluate("() => { state.placesAt = 0; askPlaces(); }")
         page.wait_for_function("state.place === ''")
         page.wait_for_selector(".dfile .addnote", state="attached")
+
+
+# Code that moved: a block of two functions goes from `lib.py` to
+# `code.py`, and one line is changed on the way. git writes it as twelve
+# lines removed in one file and twelve added in the other.
+LIB = '''import os
+
+
+def ring_drops(ring):
+    """How many pushes the ring refused."""
+    return ring.dropped
+
+
+def ring_fill(ring):
+    """How full the ring is, from 0 to 100."""
+    if ring.capacity == 0:
+        return 0
+    return ring.size * 100 // ring.capacity
+
+
+def ring_free(ring):
+    ring.items.clear()
+'''
+LIB_AFTER = 'import os\n\n\ndef ring_free(ring):\n    ring.items.clear()\n'
+UNCOMMITTED = ".diffhead.uncommitted ~ .dfile"
+
+
+def move_a_block(root, before="", edit=("dropped", "refused")):
+    """`lib.py` committed, then its two functions moved to `code.py` and
+    not committed. `before` goes in front of the block; `edit` is the change
+    made on the way."""
+    git = conftest.git_in
+    (root / "lib.py").write_text(LIB)
+    git(root, "add", "lib.py")
+    git(root, "commit", "-qm", "lib")
+    (root / "lib.py").write_text(LIB_AFTER)
+    block = LIB[LIB.index("\n\ndef ring_drops"):LIB.index("\n\n\ndef ring_free")]
+    (root / "code.py").write_text("print(1)\nprint(2)\n" + before
+                                  + block.replace(*edit) + "\n")
+
+
+def moves_in(page, path):
+    """What one file of the uncommitted half shows of a move."""
+    return page.evaluate("""(path) => {
+      const file = [...document.querySelectorAll('.diffhead.uncommitted ~ .dfile')]
+        .find((one) => one.querySelector('.path').textContent === path);
+      const text = (one) => one.querySelector('.dtext').textContent;
+      return {
+        sum: (file.querySelector('.movedsum') || {}).textContent || '',
+        notes: [...file.querySelectorAll('.movednote')].map((note) =>
+          [...note.children].map((part) => part.textContent).join(' | ')),
+        moved: [...file.querySelectorAll('.dline.moved, .half.moved')].map(text),
+        edited: [...file.querySelectorAll('.movededit')].map((one) => [
+          one.classList.contains('added') ? '+' : '-', text(one),
+          [...one.querySelectorAll('.wd')].map((word) => word.textContent)]),
+        plain: [...file.querySelectorAll(
+            '.dline.removed, .dline.added, .half.removed, .half.added')]
+          .filter((one) => !one.matches('.moved, .movededit')).map(text),
+      };
+    }""", path)
+
+
+def test_a_block_moved_to_another_file_is_drawn_as_a_move(repo_page):
+    """A block moved to another file was all red in one file and all green
+    in the other, and the one word changed on the way was lost among them.
+    The moved lines are drawn quietly now, under a line that says where the
+    block went or came from, and the line changed on the way keeps its
+    colour, with the word marked against the other end."""
+    root, _ = repo_page
+    move_a_block(root)
+    with opened(repo_page, tab="diff") as page:
+        page.wait_for_selector(UNCOMMITTED + " .movednote")
+        went = moves_in(page, "lib.py")
+        came = moves_in(page, "code.py")
+    assert went["notes"] == ["moved to | code.py, lines 5 to 14"
+                             " | 1 line changed on the way"]
+    assert came["notes"] == ["moved from | lib.py, lines 4 to 13"
+                             " | 1 line changed on the way"]
+    assert went["edited"] == [["-", "    return ring.dropped", ["dropped"]]]
+    assert came["edited"] == [["+", "    return ring.refused", ["refused"]]]
+    assert len(went["moved"]) == len(came["moved"]) == 9
+    assert went["moved"][0] == came["moved"][0] == "def ring_drops(ring):"
+    # The blank lines at the edges are no part of the block: alike anywhere.
+    assert went["plain"] == came["plain"] == ["", ""]
+    assert went["sum"] == "10 of 12 removed lines moved"
+    assert came["sum"] == "10 of 12 added lines moved here"
+
+
+def test_in_two_columns_a_moved_line_stands_beside_the_line_it_was(repo_page, ws):
+    """In two columns the moved block stood beside a hatched half, and the
+    line it was stood in another file. Now each moved line has the line it
+    was beside it, with that line's number where it stood."""
+    ws.save_config({"diff_columns": "two"})
+    root, _ = repo_page
+    move_a_block(root)
+    with opened(repo_page, tab="diff") as page:
+        page.wait_for_selector(UNCOMMITTED + " .dline.pair .half.was.moved")
+        pairs = page.evaluate("""() => {
+          const file = [...document.querySelectorAll('.diffhead.uncommitted ~ .dfile')]
+            .find((one) => one.querySelector('.path').textContent === 'code.py');
+          return [...file.querySelectorAll('.dline.pair')]
+            .filter((row) => row.querySelector('.moved, .movededit'))
+            .map((row) => [...row.querySelectorAll('.half')].map((half) => [
+              half.querySelector('.ln').textContent,
+              half.querySelector('.dtext').textContent,
+              [...half.querySelectorAll('.wd')].map((word) => word.textContent)]));
+        }""")
+        went = moves_in(page, "lib.py")
+    assert len(pairs) == 10
+    assert pairs[0] == [["4", "def ring_drops(ring):", []],
+                        ["5", "def ring_drops(ring):", []]]
+    assert pairs[2] == [["6", "    return ring.dropped", ["dropped"]],
+                        ["7", "    return ring.refused", ["refused"]]]
+    # Where it went, the block stands alone, beside nothing.
+    assert went["edited"] == [["-", "    return ring.dropped", ["dropped"]]]
+    assert len(went["moved"]) == 9
+
+
+def test_a_click_on_where_a_block_went_opens_and_goes_to_its_other_end(repo_page):
+    """The other end of a block may be far down, in a file shut for its
+    size: the click opens that file and goes to the block there."""
+    root, _ = repo_page
+    move_a_block(root, before="".join(f"x{n} = {n}\n" for n in range(8)))
+    with opened(repo_page) as page:
+        # `lib.py`'s diff is 17 lines and `code.py`'s 22: only the second
+        # is shut.
+        page.evaluate("BIG_LINES = 20")
+        show_tab(page, "diff")
+        went = UNCOMMITTED + ":has(.path:text-is('lib.py')) .movednote button"
+        page.wait_for_selector(went)
+        assert page.locator(UNCOMMITTED + " .movednote").count() == 1
+        page.click(went)
+        page.wait_for_function("""() => {
+          const note = [...document.querySelectorAll('.movednote')]
+            .find((one) => one.dataset.move.endsWith('\\nto'));
+          if (!note) return false;
+          const pane = document.querySelector('.diffscroll').getBoundingClientRect();
+          const box = note.getBoundingClientRect();
+          return box.top >= pane.top && box.bottom <= pane.bottom;
+        }""")
+        assert moves_in(page, "code.py")["notes"][0].startswith("moved from | lib.py")
+
+
+def test_lines_alike_by_chance_or_an_edit_in_place_are_no_move(repo_page):
+    """Two lines alike in two places are chance, and so is a block made
+    of `}` and blank lines. A block indented in place, under a new `if`,
+    is the same lines removed and added in one run of changes: an edit,
+    not a move."""
+    root, _ = repo_page
+    git = conftest.git_in
+    before = ("def a(items):\n    total = compute_the_total(items)\n"
+              "    return total\n\n\ndef b(items, count):\n"
+              "    for item in items:\n        print(item)\n        count += 1\n")
+    (root / "small.py").write_text(before)
+    git(root, "add", "small.py")
+    git(root, "commit", "-qm", "small")
+    (root / "small.py").write_text(
+        "def a(items):\n    pass\n\n\ndef b(items, count):\n    if items:\n"
+        "        for item in items:\n            print(item)\n            count += 1\n")
+    (root / "code.py").write_text(
+        "print(1)\nprint(2)\ntotal = compute_the_total(items)\nreturn total\n")
+    with opened(repo_page, tab="diff") as page:
+        page.wait_for_selector(UNCOMMITTED + " .dline.added:has-text('compute_the_total')")
+        page.wait_for_selector(UNCOMMITTED + " .dline.added:has-text('if items:')")
+        assert page.locator(".movednote, .moved, .movededit, .movedsum").count() == 0
+
+
+def test_a_change_at_one_end_of_a_block_is_shown_at_the_other(repo_page):
+    """The end of a block that went is drawn from the end it came to: what
+    changed on the way is marked against it. A file whose own diff is the
+    same keeps its block (`blockSig`), so a second edit at one end left the
+    other saying one line had changed."""
+    root, _ = repo_page
+    move_a_block(root)
+    with opened(repo_page, tab="diff") as page:
+        page.wait_for_selector(UNCOMMITTED + " .movednote")
+        assert moves_in(page, "lib.py")["notes"][0].endswith("1 line changed on the way")
+        text = (root / "code.py").read_text()
+        (root / "code.py").write_text(text.replace("refused.", "refused, in all."))
+        page.wait_for_function("""() => [...document.querySelectorAll('.movednote')]
+          .some((note) => note.textContent.endsWith('2 lines changed on the way'))""")
+        went = moves_in(page, "lib.py")
+    assert went["notes"][0].endswith("2 lines changed on the way")
+    assert [one[1] for one in went["edited"]] == [
+        '    """How many pushes the ring refused."""', "    return ring.dropped"]

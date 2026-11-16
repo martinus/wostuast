@@ -160,7 +160,8 @@ None is a test. Each is kept working by its own test file:
   `--commit N`, `--open PATH`, `--review`, `--settings JSON`, `--commands`
   (skills and used commands), `--merge` (the branch ends in a merge
   settled by hand), `--fresh` (a session with no prompt yet, so no
-  transcript), then `--click`, `--type SELECTOR=TEXT` (and
+  transcript), `--moved` (two functions moved from `ring_stats.c` to
+  `ring.c`, not committed), then `--click`, `--type SELECTOR=TEXT` (and
   Enter), `--keys SELECTOR=TEXT` and `--eval JS` (or a file) in order,
   and `--part`.
 - `tests/tour.py`: six sessions, one in each state a row can be in, with

@@ -88,6 +88,25 @@ def test_the_repository_has_what_the_pictures_need(tmp_path):
     assert stage.LINES[-1] not in added
 
 
+def test_the_repository_can_move_code_from_one_file_to_another(tmp_path):
+    """`--moved`: two functions leave `ring_stats.c` for the end of `ring.c`
+    in the change not committed, one line edited on the way."""
+    repo = tmp_path / "proj"
+    stage.make_repo(repo, moved=True)
+    run = lambda *args: subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True,
+        check=True).stdout
+    assert run("status", "--porcelain").split("\n")[:-1] == [
+        " M ring.c", " M ring_stats.c", "?? PLAN.md"]
+    lines = lambda sign, path: [line[1:] for line in run(
+        "diff", "--", path).split("\n") if line[:1] == sign and line[:3] != sign * 3]
+    went = lines("-", "ring_stats.c")
+    came = lines("+", "ring.c")
+    assert went[:len(went) - 1] == stage.MOVED.split("\n")[:-1]
+    assert [one for one in came if one not in went] == [
+        "\treturn r->refused;", "/* not committed yet */"]
+
+
 @skip_without_browser
 def test_it_draws_a_commit_with_a_review_and_a_click(tmp_path):
     out = tmp_path / "out.png"
