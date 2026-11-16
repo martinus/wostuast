@@ -194,7 +194,11 @@ browser cuts the scroll back
   `.filelist.transcript` exists too. `NOTES_SHOWN` in `test_page_files.py`.
 - Ask one question when a redraw could land between two:
   `wait_for_function("...length === 1")`, not `wait_for_selector` then
-  `.count()`.
+  `.count()`. **`eval_on_selector_all` is two questions too**: it finds
+  the elements, then measures them, and a block built again between the
+  two was measured off the page, at 0
+  (`test_picking_an_untracked_file_moves_the_pane_to_it`). Find and
+  measure in one `page.evaluate`.
 - **`evaluate` waits for a promise it is handed, with no timeout**:
   `page.evaluate("load()")` on a held request hung. Use
   `"() => { load(); }"`.
