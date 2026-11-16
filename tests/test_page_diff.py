@@ -24,6 +24,7 @@ from browser import (
     wait_until,
     stays,
     spy_on_note,
+    frames,
 )
 
 pytestmark = skip_without_browser
@@ -386,15 +387,21 @@ def test_picking_an_untracked_file_moves_the_pane_to_it(repo_page):
             ".diffscroll", "el => el.scrollHeight > el.clientHeight + 400"
         ), "the pane does not scroll, so this proves nothing"
         page.click(".filelist button:has-text('NOTES.md')")
-        page.wait_for_selector(".dfile .what:text-is('untracked')")
-        page.wait_for_function("document.querySelector('.diffscroll').scrollTop > 0")
-        where = page.eval_on_selector_all(
-            ".diffscroll, .dfile:has(.what:text-is('untracked'))", """els => {
-              const pane = els[0].getBoundingClientRect();
-              const block = els[1].getBoundingClientRect();
-              return { above: block.top - pane.top, tall: pane.height,
-                       went: els[0].scrollTop };
-            }""")
+        # The block is built twice, reading and then read, and the pane goes
+        # to it after each. Wait for the second, and find the block in the
+        # same step that measures it: `eval_on_selector_all` finds first and
+        # measures after, and the first block was gone from the page by
+        # then, and stood at 0.
+        page.wait_for_function("state.diffs.found && !state.diffs.goTo")
+        frames(page)
+        where = page.evaluate("""() => {
+          const scroll = document.querySelector('.diffscroll');
+          const pane = scroll.getBoundingClientRect();
+          const block = [...scroll.querySelectorAll('.dfile')].find((one) =>
+            one.querySelector('.what').textContent === 'untracked').getBoundingClientRect();
+          return { above: block.top - pane.top, tall: pane.height,
+                   went: scroll.scrollTop };
+        }""")
         # The pane moved, and the block is on screen rather than far below
         # it. The block is the last thing in the pane, so it can only come
         # as far up as the end of the scroll allows.
