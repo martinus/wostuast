@@ -165,6 +165,11 @@ scratchpad.
   leaves `grep -E "passed|failed"` empty. Filter for `error` too, or read
   the exit status.
 
+**`git add` a new test file before the gate**: the checks that walk the
+tests read `git ls-files` (`events_by_hand` in `tests/test_log.py`), so a
+new file passed them locally and was red in CI (#753: a `Snapshot` record
+written by hand, not with `bare_event`).
+
 **A test outside `tests/test_page_*` that drives a browser, or runs
 `tests/shot.py`, `tests/stage.py` or `tests/tour.py`, carries
 `@skip_without_browser`**: only CI's browser shards have Playwright
@@ -179,6 +184,13 @@ browser cuts the scroll back
 (`test_folding_from_the_foot_of_the_pane_keeps_the_message_in_sight`).
 
 **Playwright.**
+- **A machine without it skips every page test: make a venv in the
+  scratchpad, and run everything through its Python**:
+  `python3 -m venv $S/venv && $S/venv/bin/pip install pytest pytest-xdist
+  pytest-shard playwright && $S/venv/bin/python -m playwright install
+  chromium`, then `$S/venv/bin/python -m pytest`, `tests/perturb.py`,
+  `tests/stage.py` and `tests/tour.py` the same way: `perturb.py` runs
+  pytest with its own interpreter. The packages are CI's (`tests.yml`).
 - **`fill` with a long many-line text takes for ever** (60 KB: over
   60 s): set `value` in `evaluate` and send one `input` event
   (`test_a_tall_send_box_says_how_much_it_holds`).

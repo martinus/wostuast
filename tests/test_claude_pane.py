@@ -57,3 +57,44 @@ def test_it_says_what_it_needs(monkeypatch):
     monkeypatch.setenv("PATH", "/nowhere")
     with pytest.raises(RuntimeError, match="claude and tmux"):
         claude_pane.ClaudePane()
+
+
+#: A stand-in for Claude Code under the SDK: it answers the initialize,
+#: turns a prompt into one `can_use_tool`, and hands back what it was
+#: told as its result. The shapes are the ones measured on 2.1.330 (#751).
+STAND_IN = r'''
+import json, sys
+for line in sys.stdin:
+    said = json.loads(line)
+    if said.get("type") == "control_request":
+        print(json.dumps({"type": "control_response", "response": {
+            "subtype": "success", "request_id": said["request_id"], "response": {}}}), flush=True)
+    elif said.get("type") == "user":
+        print(json.dumps({"type": "control_request", "request_id": "r1", "request": {
+            "subtype": "can_use_tool", "tool_name": "Bash",
+            "input": {"command": "touch x"}}}), flush=True)
+    elif said.get("type") == "control_response":
+        print(json.dumps({"type": "result", "got": said}), flush=True)
+'''
+
+
+@pytest.mark.parametrize("allow, said", [
+    (True, {"behavior": "allow", "updatedInput": {"command": "touch x"}}),
+    (False, {"behavior": "deny", "message": "no"})])
+def test_the_sdk_stand_in_is_asked_and_answered_as_the_sdk_answers(tmp_path, allow, said):
+    """`ClaudeSdk` speaks the SDK's lines: a prompt in, a `can_use_tool`
+    out, and the answer back with its request's id and input."""
+    import sys
+
+    script = tmp_path / "stand_in.py"
+    script.write_text(STAND_IN)
+    with claude_pane.ClaudeSdk(command=[sys.executable, str(script)]) as sdk:
+        assert sdk.wait_for(lambda one: one.get("type") == "control_response", 10)
+        sdk.prompt("go")
+        asked = sdk.request(10)
+        assert asked and asked["request_id"] == "r1"
+        sdk.answer(asked, allow=allow)
+        assert sdk.request(1) is None, "an answered request was handed out again"
+        result = sdk.wait_for(lambda one: one.get("type") == "result", 10)
+    assert result["got"]["response"] == {"subtype": "success", "request_id": "r1",
+                                         "response": said}

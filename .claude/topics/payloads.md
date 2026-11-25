@@ -50,6 +50,11 @@ What hooks, the status line and transcripts carry, and how to find out.
 - **Measure a live Claude Code against a fake Messages API with
   `tests/claude_pane.py`**: its own home and a fake key, nothing of the
   owner's; it runs in a cloud session too (#328, #331, #337, #338).
+  - **A session no terminal owns is `ClaudeSdk`** (#751): Claude Code run
+    as the Agent SDK runs it, as T3 Code does, with each permission prompt
+    a `control_request` that `answer` allows or denies. A hook's payload
+    there carries nothing that says so (`tests/fixtures/README.md`, "A
+    dialog under the Agent SDK").
   - **"What does X do while a turn runs" is `busy(seconds)`**: a Bash
     `sleep` still running when it returns (#351). `sleep` asks no
     permission, so a wait for its dialog let the turn end first;

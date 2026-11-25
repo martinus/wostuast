@@ -22,6 +22,10 @@ throwaway home, and edit scripts for the one large file.
     put statements in `(() => { … })()`; a bare `const` drew nothing.
   - The next push undoes a `patchSession`, so a picture of a state the
     daemon does not hold patches on an interval.
+  - **A bar built once keeps what it was built with**: a `patchSession` of
+    `pane` left the permission bar's "open the terminal" (#751). Clear its
+    `fresh` key and draw it again in the same `--eval`:
+    `delete $("asking").dataset.ask; drawAsking();`.
   - **A view's card is asked for when the view opens**: `openFeed`, wait
     for its answer (`async`, `await` a timeout), then set
     `state.feedText` and `drawFeed($("content"))`. Set first, the answer
@@ -47,7 +51,9 @@ throwaway home, and edit scripts for the one large file.
   draws the new state (#422, #427).
 - **Send the reader the picture, and wait for their yes, before the pull
   request**: a fix merged unseen came back still wrong. `SendUserFile` the
-  PNG **from `pictures/` in the checkout** (in `.git/info/exclude`): one
+  PNG **from `pictures/` in the checkout** (in `.git/info/exclude`; `grep
+  -qx pictures/ .git/info/exclude || echo pictures/ >> .git/info/exclude`
+  on a new machine): one
   sent from the scratchpad after a restart arrived as nothing. **The main
   checkout's, not a worktree's**: the reader's app opens files under the
   main one only. Put before and after in one PNG, labelled:
@@ -179,7 +185,9 @@ None is a test. Each is kept working by its own test file:
   tool call: `send`, `paste`, `ask`, `busy`, `turns`, `statuses`,
   `hooks`, `settings`, and `restart` (`--resume <id>` brings the session
   back). What Claude Code does is measured with it, not guessed
-  (topics/payloads).
+  (topics/payloads). `ClaudeSdk` is the same Claude Code under the
+  Agent SDK, as T3 Code runs it: no pane, and each permission prompt a
+  `control_request` the script answers (`request`, `answer`).
 - `tests/page_coverage.py`: runs the browser tests (all, or those named)
   with `WOSTUAST_COVERAGE`, which `cover` in `tests/browser.py` reads,
   and prints the share of the page script's lines that ran and each

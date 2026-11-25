@@ -9,6 +9,15 @@ costs a round trip. **Owner `martinus` and repo `wostuast` go in separate
 fields**: `martinus/wostuast` as the repo asked for
 `martinus/martinus/wostuast`.
 
+- **In T3 Code the calls are its own** (#752, #753): `gh issue list --state
+  open --json number,author` for the author filter, `pull_request_create`,
+  `pull_request_read` with `sections: ["checks"]`, `ci_logs` with `check`
+  for a red one, `pull_request_merge` with `expectedHeadSha` and `method:
+  "merge"`, then `watch_pull_request` (`until: "merged"`) and end the turn:
+  it wakes you when the checks finish. It adds no footer, so step 3 is a
+  read only. Steps 7 to 9 stand: a body's "Closes #N" closed the issue on
+  the merge, read the list again all the same.
+
 0. **Load the tools in one call**: `ToolSearch` with `select:mcp__github__create_pull_request,mcp__github__update_pull_request,mcp__github__pull_request_read,mcp__github__merge_pull_request,mcp__github__actions_list,mcp__github__get_job_logs,mcp__github__list_issues,mcp__github__issue_read,mcp__github__issue_write`
    and `max_results` 9. `subscribe_pr_activity`, `send_later` and
    `delete_trigger` are loaded already.

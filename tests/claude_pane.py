@@ -345,6 +345,147 @@ class ClaudePane:
         return json.loads((self.home / ".claude" / "settings.json").read_text())
 
 
+class ClaudeSdk:
+    """Claude Code run as the Agent SDK runs it, as T3 Code does: no pane,
+    stream-json over pipes, and each permission prompt sent to this script
+    as a `control_request` (`can_use_tool`), which `answer` allows or denies.
+
+    What a session no terminal owns does was measured this way (#751): the
+    `PermissionRequest` hook starts beside the `control_request`, an answer
+    from here does not stop it, and an allow from the hook first sends a
+    `control_cancel_request`. The probe was written from nothing; this is it.
+
+        with claude_pane.ClaudeSdk() as sdk:
+            sdk.ask("Bash", {"command": "touch x", "description": "x"})
+            asked = sdk.request()           # the can_use_tool, or None
+            sdk.answer(asked, allow=False)
+            sdk.wait_for(lambda one: one.get("type") == "result")
+            sdk.hooks()                     # what the hooks were handed
+
+    `hook` is a command for `PermissionRequest` instead of the keeper, for
+    a question about a hook that waits; `command` runs instead of `claude`,
+    which the test of this class uses.
+    """
+
+    def __init__(self, mode: str = "default",
+                 events: tuple[str, ...] = ("UserPromptSubmit", "Stop", "PermissionRequest"),
+                 hook: str = "", entrypoint: str = "t3-code",
+                 command: "list[str] | None" = None) -> None:
+        if not command and not shutil.which("claude"):
+            raise RuntimeError("ClaudeSdk needs claude on the PATH")
+        self.home = Path(tempfile.mkdtemp(prefix="claude-sdk-"))
+        self.work = self.home / "work"
+        self.work.mkdir()
+        self.api = FakeApi()
+        key = "sk-ant-api03-" + "x" * 80
+        (self.home / ".claude.json").write_text(json.dumps({
+            "hasCompletedOnboarding": True,
+            "customApiKeyResponses": {"approved": [key[-20:]], "rejected": []},
+            "projects": {str(self.work): {"hasTrustDialogAccepted": True,
+                                          "hasCompletedProjectOnboarding": True}}}))
+        keep = f"cat >> {self.home}/hooks.jsonl; echo >> {self.home}/hooks.jsonl"
+        hooks = {event: [{"hooks": [{"type": "command", "command": keep}]}]
+                 for event in events}
+        if hook:
+            hooks["PermissionRequest"] = [{"hooks": [{"type": "command", "command": hook}]}]
+        (self.home / ".claude").mkdir()
+        (self.home / ".claude" / "settings.json").write_text(json.dumps({
+            "permissions": {"defaultMode": mode}, "hooks": hooks}))
+        env = {"HOME": str(self.home), "PATH": os.environ["PATH"],
+               "ANTHROPIC_API_KEY": key,
+               "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{self.api.port}",
+               "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
+               "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+               "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_ENTRYPOINT": entrypoint}
+        #: Every line Claude Code wrote, parsed, with when it came.
+        self.messages: list[dict] = []
+        self.started = time.monotonic()
+        self.process = subprocess.Popen(
+            [*(command or ["claude"]), "--output-format", "stream-json", "--verbose",
+             "--input-format", "stream-json", "--permission-prompt-tool=stdio",
+             f"--permission-mode={mode}"],
+            cwd=self.work, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True)
+        threading.Thread(target=self._read, daemon=True).start()
+        self.send({"type": "control_request", "request_id": "init",
+                   "request": {"subtype": "initialize", "hooks": None}})
+
+    def _read(self) -> None:
+        for line in self.process.stdout:
+            try:
+                one = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(one, dict):
+                one["_at"] = time.monotonic() - self.started
+                self.messages.append(one)
+
+    def __enter__(self) -> "ClaudeSdk":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self.process.kill()
+        self.process.wait(timeout=10)
+        self.api.close()
+
+    def send(self, message: dict) -> None:
+        """One line of stream-json to Claude Code."""
+        self.process.stdin.write(json.dumps(message) + "\n")
+        self.process.stdin.flush()
+
+    def prompt(self, text: str) -> None:
+        self.send({"type": "user", "message": {"role": "user", "content": text},
+                   "parent_tool_use_id": None, "session_id": ""})
+
+    def ask(self, tool: str, given: dict, prompt: str = "go") -> None:
+        """Make the agent call `tool` with `given`: its next turn answers
+        with that call, and a dialog comes here as a `control_request`."""
+        self.api.next_call = {"id": f"toolu_{time.monotonic_ns()}",
+                              "name": tool, "input": given}
+        self.prompt(prompt)
+
+    def wait_for(self, check: "Callable[[dict], bool]", seconds: float = 40) -> "dict | None":
+        """The first message `check` says yes to, or None at the deadline."""
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            for one in list(self.messages):
+                if check(one):
+                    return one
+            time.sleep(0.1)
+        return None
+
+    def request(self, seconds: float = 40) -> "dict | None":
+        """The next `can_use_tool` not yet answered: a permission prompt."""
+        return self.wait_for(lambda one: one.get("type") == "control_request"
+                             and (one.get("request") or {}).get("subtype") == "can_use_tool"
+                             and not one.get("_answered"), seconds)
+
+    def answer(self, asked: dict, allow: bool = True, message: str = "no") -> None:
+        """Allow the prompt with its own input, or deny it with `message`,
+        as the SDK's permission callback does."""
+        asked["_answered"] = True
+        said = ({"behavior": "allow", "updatedInput": asked["request"].get("input") or {}}
+                if allow else {"behavior": "deny", "message": message})
+        self.send({"type": "control_response", "response": {
+            "subtype": "success", "request_id": asked["request_id"], "response": said}})
+
+    def hooks(self) -> list[dict]:
+        """Every hook payload kept, in order."""
+        path = self.home / "hooks.jsonl"
+        if not path.exists():
+            return []
+        out = []
+        for line in path.read_text().splitlines():
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                pass
+        return out
+
+
 def main() -> int:
     with ClaudePane() as cc:
         cc.ready()
