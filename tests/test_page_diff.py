@@ -2401,3 +2401,33 @@ def test_a_change_at_one_end_of_a_block_is_shown_at_the_other(repo_page):
     assert went["notes"][0].endswith("2 lines changed on the way")
     assert [one[1] for one in went["edited"]] == [
         '    """How many pushes the ring refused."""', "    return ring.dropped"]
+
+
+def test_a_turns_start_is_a_base_and_shows_what_changed_since(repo_page, served, ws):
+    """The starts of the session's turns stand in the base picker (#749).
+    Picked, the diff is one half from that moment to the files now: what
+    was changed before the turn is not in it, a file the turn made is,
+    and there is no commit to pick or step through."""
+    root, path = repo_page
+    daemon, _ = served
+    ws.append_event(conftest.event("UserPromptSubmit", cwd=str(root), ts=time.time(),
+                                   prompt="Add the third line"))
+    daemon.tick()
+    (root / "code.py").write_text("print(1)\nprint(2)\nprint(3)\n")
+    (root / "made.txt").write_text("by the turn\n")
+    key = "turn:" + daemon.store.sessions["s1"].turn_key
+    with opened(path) as page:
+        show_tab(page, "diff")
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.pickbase optgroup option')]
+                     .some((one) => one.textContent === 'the start of this turn')""")
+        assert page.is_visible(".pickof")
+        page.select_option(".pickbase", key)
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('.diffhead.turn ~ .dfile .path')]
+                     .map((one) => one.textContent).join(' ') === 'code.py made.txt'""")
+        assert page.is_hidden(".pickof") and page.is_hidden(".stepper")
+        assert page.locator(".diffhead.committed").count() == 0
+        page.select_option(".pickbase", "")
+        page.wait_for_selector(".diffhead.committed")
+        assert page.is_visible(".pickof")

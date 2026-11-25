@@ -1100,6 +1100,17 @@ dialog you read is still the one on screen. The *reason* is a prompt, and a
 prompt typed into the wrong place does harm. So the reason is typed only after
 the daemon has seen proof that the dialog closed with No.
 
+### What one turn changed
+
+When a turn begins, the daemon keeps the worktree as it is: a tick after it
+folds the `UserPromptSubmit`, it runs `git add -A` and `git write-tree` with
+an index and an object folder of its own (`snapshots/<hash>/`), reading the
+repository's objects as alternates. Nothing is written into the repository.
+It appends a `Snapshot` record (`turn`, `tree`, `root`), and the fold keeps
+it on the session as a `TurnStart`. The Review tab offers each start as a
+base, and the diff runs from that tree to a snapshot taken for the answer:
+"since turn N", with untracked files in it.
+
 ### Saying Yes, safely
 
 A Yes is never a key. Keys land on whichever dialog is up when they arrive,

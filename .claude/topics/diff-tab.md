@@ -125,6 +125,24 @@ Comments are topics/review; git is topics/git.
     head's first child, which the tests read.
     `test_a_commit_message_is_markdown_and_its_text_is_one_click_away`,
     `test_a_document_is_read_as_markdown_or_text_from_the_right_of_its_path`.
+- **A turn's start is a base, and the diff from it runs to the files now**
+  (#749, `turn_diff`, `turn_bases`, `TurnStart`): "this turn" and "since
+  turn N" in one control, the reader's choice over each turn alone. The
+  daemon snapshots the worktree a tick after `UserPromptSubmit`, and only
+  within `SNAPSHOT_LATE` (`take_snapshots`): a daemon that starts later
+  folds old turns, and the worktree has moved on. **"Now" is a snapshot
+  too**, so files git does not track are in the half. One half, `turn`,
+  `at_commit` false: its new side is the disk, so a comment anchors as on
+  the uncommitted half. The commit picker and the stepper hide
+  (`report.turn`). **The page's `turn:<key>` is looked up in the
+  session's own starts for this worktree (`turn_start`), never taken as a
+  tree**; anything else is a branch nobody has. A whole file asks with
+  `report.turn` as its base.
+  `test_since_a_turn_shows_what_changed_since_untracked_files_too`,
+  `test_a_turn_nobody_kept_is_no_base`,
+  `test_a_turn_that_began_long_ago_gets_no_snapshot`,
+  `test_a_snapshot_is_kept_only_for_the_turn_it_names`,
+  `test_a_turns_start_is_a_base_and_shows_what_changed_since`.
 - **The pickers say what they hold, in the narrow face**: "all changes"
   counts the branch's own commits. "against" stands beside the branch
   picker, which does not shrink, as a branch name must read whole.

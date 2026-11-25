@@ -435,6 +435,14 @@ words marked.
   for a feature, or a release branch for a backport. If wostuast finds the
   wrong one, pick another beside the commit picker. Your browser keeps that
   choice for the worktree.
+- **What one turn changed:** the base picker also lists the start of each
+  turn of this session. Pick "the start of this turn" to see what the agent
+  changed since your last prompt, or the start of an older turn to see
+  everything since then. It is one half, up to the files on disk now, and it
+  includes new files that git does not track yet. wostuast keeps the
+  worktree as it was when each turn began, in its own folder: it writes
+  nothing into your repository. A turn that ran while wostuast was not
+  running is not listed.
 - **Hidden lines:** where lines are hidden between changes, a band says how
   many. Show twenty more from either end, or all of them.
 - **Untracked files** are listed on their own, because git has no diff for
@@ -813,6 +821,7 @@ Everything wostuast writes is on your machine, in private files (`0600`, in
 | `~/.local/state/wostuast/reminders.json` | The reminders you set on the page, until each is read. |
 | `~/.local/state/wostuast/folders.json` | The folders you added to a worktree's Files tab on the page. |
 | `~/.local/state/wostuast/seen.json` | When you last read each session on the page, for its unread mark. |
+| `~/.local/state/wostuast/snapshots/` | Each session's worktree as it was when each of its turns began, for the Review tab: git objects and an index of wostuast's own, a folder a session. It holds copies of changed and untracked files. A folder goes two weeks after its last turn. |
 | `~/.local/state/wostuast/wostuast.log` | What went wrong, if anything. Rotates at 5 MB. |
 | `~/.local/state/wostuast/daemon.lock` | Held while `wostuast` runs, so a second start stops and says where the first one serves its page. It says the pid and the address. |
 | `~/.config/wostuast/settings.json` | Your settings and your ticket links. The page writes it when you change a setting. |
