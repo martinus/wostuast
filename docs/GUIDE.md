@@ -903,6 +903,11 @@ Reading works: the session list, all three tabs, the views, and alerts. The thin
 type into a pane (jump, send, answer, no) need tmux. Those controls are
 off for a session with no pane, and the page says why.
 
+Yes is not typed, so it works with no pane: the page gives it to the
+dialog's own hook. No is typed (an Escape), so it is off with no pane, and
+it says where to answer instead. A session that T3 Code runs is named that
+way: "this session runs in T3 Code".
+
 A session that has no terminal of its own has no pane either, even when it
 was started inside tmux. Examples are a session that Remote Control
 (`claude rc`) starts, and a `claude -p` that an agent runs. You can read it on

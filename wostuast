@@ -747,6 +747,10 @@ def wait_for_yes(ask: str) -> str:
     name of its own and then renamed, so the daemon never sees the file
     unlocked and takes it for one left behind. Claude Code stops the hook
     when the terminal answers first, and the lock goes with the process.
+
+    **Under the Agent SDK it does not** (#751): the daemon takes the file
+    away once the dialog's call has its result (`release_hooks`), and the
+    hook, which looks for its name on every poll, returns "".
     """
     folder = approvals_dir()
     private_dir(folder)
@@ -765,6 +769,10 @@ def wait_for_yes(ask: str) -> str:
             head, colon, pick = said.partition(":")
             if head == ask and (not colon or pick.isdigit()):
                 return said
+            # Its name gone is the daemon saying the dialog closed where
+            # this hook could not hear it: there is nothing to allow.
+            if not os.path.exists(waiting):
+                return ""
             time.sleep(APPROVE_POLL)
         return ""
     finally:
@@ -1482,6 +1490,10 @@ class Session:
     home: str = ""
     pane: str = ""
     pid: int = 0
+    #: What runs the agent: Claude Code's own `CLAUDE_CODE_ENTRYPOINT`, as
+    #: the hook found it (#751). No payload field says it. The page names
+    #: only the ones `RUNS_IN` knows.
+    entrypoint: str = ""
     transcript_path: str = ""
     state: str = "done"
     #: The moment this session last became what it is, which is what the list
@@ -2777,6 +2789,8 @@ def note_where(session: Session, event: dict[str, Any], name: str,
         session.pane = pane if PANE_PATTERN.match(pane) else ""
     if "pid" in event:
         session.pid = to_int(event.get("pid"))
+    if "entrypoint" in event:
+        session.entrypoint = str(event.get("entrypoint") or "")[:ENTRYPOINT_MOST]
 
 
 def touched_the_tree(event_name: str, event: dict[str, Any]) -> bool:
@@ -10406,6 +10420,18 @@ def model_id(session: Session) -> str:
     return found if MODEL_SHAPE.fullmatch(found) else ""
 
 
+#: What runs an agent that has no pane, by Claude Code's
+#: `CLAUDE_CODE_ENTRYPOINT`, as the page names it: "answer it in T3 Code"
+#: (#751). Only names known here are said. Any other entrypoint gets the
+#: plain "not in tmux", which is true of every session with no pane. A
+#: new one is then said too little, never wrongly.
+RUNS_IN = {"t3-code": "T3 Code"}
+
+#: How much of an entrypoint the fold keeps: it is a short name, and a
+#: hook's environment is not ours to trust with a row's size.
+ENTRYPOINT_MOST = 40
+
+
 def row(session: Session) -> dict[str, Any]:
     """One session as the page wants it: flat, small, and ready to compare.
 
@@ -10431,6 +10457,8 @@ def row(session: Session) -> dict[str, Any]:
         "state_word": STATE_WORDS.get(session.state, session.state),
         "cwd": session.cwd,
         "pane": session.pane,
+        # Where to answer a session that is in no pane, when that is known.
+        "runs_in": "" if session.pane else RUNS_IN.get(session.entrypoint, ""),
         "repo": facts.repo,
         "root": facts.root,
         **git_fields(facts),
@@ -11285,6 +11313,10 @@ class Daemon:
         #: `DECLINE_WAIT` between its Escape and its reason, and a second one
         #: -- another tab -- would press a second Escape into what came next.
         self.declining: set[str] = set()
+        #: Hooks that wait on a Yes, by their nonce, with the session and
+        #: the call of their dialog: kept past the dialog, which the fold
+        #: forgets when the row leaves amber (`release_hooks`).
+        self.hooks_held: dict[str, tuple[str, str]] = {}
 
     def session(self, session_id: str) -> Session | None:
         return self.store.sessions.get(session_id)
@@ -11570,6 +11602,36 @@ class Daemon:
             wrote = True
         return wrote
 
+    def release_hooks(self) -> None:
+        """Let a waiting hook go once its dialog was answered where it cannot
+        hear it (#751).
+
+        Claude Code stops a waiting hook when its terminal answers first.
+        Under the Agent SDK it does not. Measured on 2.1.330, run as T3 Code
+        runs it (`--permission-prompt-tool=stdio`): T3 Code's answer ran the
+        call, or refused it, and the hook slept on for `APPROVE_WAIT` with
+        its lock, one process for every dialog. Its late allow changed
+        nothing: the call that was refused stayed refused. The proof that
+        the dialog closed is the one `decline` takes, the call's result in
+        the transcript. Then `<ask>.wait` goes, and the hook returns, saying
+        nothing (`wait_for_yes`). A dialog whose call is not known keeps its
+        hook to the end, as before.
+        """
+        for session in list(self.store.sessions.values()):
+            shown = session.dialog or {}
+            ask, call = str(shown.get("ask") or ""), str(shown.get("call") or "")
+            if ask and call and session.approvable:
+                self.hooks_held[ask] = (session.session_id, call)
+        for ask, (session_id, call) in list(self.hooks_held.items()):
+            if not hook_waits(ask):
+                del self.hooks_held[ask]
+            elif self.call_answered(session_id, call):
+                try:
+                    (approvals_dir() / f"{ask}.wait").unlink(missing_ok=True)
+                except OSError:
+                    continue    # the next tick tries again
+                del self.hooks_held[ask]
+
     def interrupted_in_terminal(self) -> bool:
         """Write `Interrupted` for a working session whose transcript ends in
         the interrupt (#713): no hook says so, measured on 2.1.318, and the
@@ -11681,6 +11743,7 @@ class Daemon:
         # tick that had already changed something the read never ran.
         if self.declined_in_terminal():
             moved = self.store.refresh() or moved
+        self.release_hooks()
         if self.model_answered():
             moved = self.store.refresh() or moved
         if self.interrupted_in_terminal():
@@ -13634,6 +13697,11 @@ def note_agent(record: dict[str, Any]) -> None:
     # terminal: an rc session, a `claude -p` (`reads_terminal`).
     reads = reads_terminal(record["pid"])
     record["pane"] = os.environ.get("TMUX_PANE", "") if reads else ""
+    # What runs the agent (#751): T3 Code sets "t3-code" for the sessions
+    # it runs through the Agent SDK, which have no pane. No payload field
+    # says it. Written on every event, as the pane is, so a resume
+    # somewhere else says so.
+    record["entrypoint"] = os.environ.get("CLAUDE_CODE_ENTRYPOINT", "")
     # And such an agent may have been run by another one, from its
     # Bash tool: the page draws it under that one's row (#422).
     # Only then, so an agent at a terminal pays nothing for it.
@@ -19774,12 +19842,29 @@ function isGone(s) {
 // `no` is a No, which is meant for the dialog. What is on its way already
 // (`sending`) is each control's own, because a No's own press is not a wait.
 function whyNotTyped(s, no) {
-  if (!s || !s.pane) return "this session is not in tmux, so nothing can be pressed";
+  if (!s || !s.pane) return notInTmux(s);
+  return whyNotAnswered(s, no);
+}
+
+// The daemon's `cannot_type` alone, without `in_tmux`: why an answer that
+// presses no key may not be given. A Yes is one. It goes to the dialog's
+// hook, so a session in no pane takes it (#751). The bar had all its
+// options off there, Yes too, and the daemon would have taken the Yes.
+function whyNotAnswered(s, no) {
+  if (!s) return notInTmux(s);
   if (isGone(s)) return "this session is over";
   if (!no && s.permission) {
     return "a permission dialog is open in the terminal: answer it there first";
   }
   return "";
+}
+
+// No key reaches a session in no pane. One that T3 Code runs says so, so
+// the reader knows where to answer it instead (`runs_in`, #751).
+function notInTmux(s) {
+  return s && s.runs_in
+    ? "this session runs in " + s.runs_in + ", not in tmux: nothing can be pressed from here"
+    : "this session is not in tmux, so nothing can be pressed";
 }
 
 // The same, for a text: the send box, the review, a model, a command. A
@@ -21513,6 +21598,10 @@ function putOption(list, cls, number, label, note) {
   return button;
 }
 
+// What the No says beside itself, unless it cannot be pressed
+// (`paintDecline`).
+const NO_SAYS = "and tell it what to do instead";
+
 // The answers, as the CLI lists them and as the question bar draws its
 // options: one numbered row each, Yes and its "Yes, and ..." in the
 // working colour, No in the colour of a cut. They were small buttons in one
@@ -21556,7 +21645,7 @@ function putAnswers(s, permission, box) {
   // stood under the list, apart from the No it belongs to. It shows only
   // while No is picked.
   const group = put(list, "div", "permnogroup");
-  option("permno", "No", "and tell it what to do instead", "no", group);
+  option("permno", "No", NO_SAYS, "no", group);
   const why = put(group, "textarea", "say permwhy");
   why.rows = 1;
   why.placeholder = "what it should do instead";
@@ -21617,6 +21706,10 @@ function paintDecline(box, s, permission) {
   const says = box.querySelector(".permsend .asksays");
   if (!submit || !why || !says) return;
   const cannot = whyNotTyped(s, true);
+  // A Yes presses no key, so only the session being over stops it (#751).
+  // The bar is shut as a whole only when nothing on it can be given.
+  const cannotYes = whyNotAnswered(s, true);
+  const shut = cannotYes || (s.approvable ? "" : cannot);
   // Without its call nothing can prove the dialog closed, so no reason is
   // typed -- and a box that takes one and then drops it is worse than none.
   const reasons = !cannot && !!permission.call;
@@ -21635,7 +21728,7 @@ function paintDecline(box, s, permission) {
   // Numbered as the CLI numbers its options, counting only those shown.
   let at = 0;
   for (const one of box.querySelectorAll(".permopts .askopt")) {
-    one.disabled = !!cannot || mine;
+    one.disabled = !!(one.dataset.pick === "no" ? cannot : cannotYes) || mine;
     const mark = one.dataset.pick === "no" ? one.parentElement : one;
     mark.classList.toggle("chosen", one.dataset.pick === pick);
     if (!one.hidden) setText(one.querySelector(".asknum"), String(++at));
@@ -21647,11 +21740,21 @@ function paintDecline(box, s, permission) {
   // do instead is the point of saying No from here. Not where no reason
   // can be typed, or that No could never be given at all.
   const wordless = pick === "no" && reasons && !why.value.trim();
-  submit.disabled = !pick || wordless || !!cannot || mine || busy;
+  // A No that cannot be pressed, beside a Yes that can, says why on itself,
+  // and where to give it (#751). Only a session in no pane gets here: in a
+  // pane, what stops the No stops the Yes too, and the bar is shut.
+  const noCannot = pick === "no" ? cannot : "";
+  const noWhy = box.querySelector(".permno .askwhy");
+  if (noWhy) {
+    setText(noWhy, shut || !cannot ? NO_SAYS
+      : s.runs_in ? "a key press: give it in " + s.runs_in
+      : "a key press, and this session is not in tmux");
+  }
+  submit.disabled = !pick || wordless || !!shut || !!noCannot || mine || busy;
   // Said in both cases: a Yes given in the terminal fires no hook, so the
   // row stays amber while the approved call runs, and Escape then stops it.
   const already = " If you already answered in the terminal, Escape stops the agent.";
-  setText(says, cannot ? cannot
+  setText(says, shut || noCannot ? shut || noCannot
     : busy ? "waiting for what is on its way to this session"
     : !pick ? "pick an answer"
     : wordless ? "write what it should do instead"

@@ -20,6 +20,13 @@ path may reach. The rest: topics/safety-typing, topics/safety-install.
   while a No is on its way (`holding(no=True)`), and takes it back if
   unread after `APPROVE_SEEN`. The allow closes the terminal's dialog; an
   Escape there stops the hook (2.1.292, `tests/fixtures/README.md`).
+  **Under the Agent SDK nothing stops it** (#751, 2.1.330): T3 Code's
+  answer ran the call, and the hook slept on for `APPROVE_WAIT`, one
+  process a dialog. So `release_hooks` takes `<ask>.wait` away once the
+  call has its result in the transcript, never before, and `wait_for_yes`
+  returns "" when its name is gone. A dialog with no `call` keeps its hook
+  to the end. `test_a_hook_is_let_go_once_its_call_has_a_result`,
+  `test_a_hook_whose_file_the_daemon_took_away_says_nothing`.
   **It waits only while a daemon runs** (`daemon_running`), at most
   `APPROVE_WAIT`, **never for a question or a plan** (`NOT_APPROVED`):
   each would hold a process for nothing. **Nor in auto mode**

@@ -1134,6 +1134,10 @@ sent it. No rule is ever written by the page or the daemon.
 The hook waits only while a daemon runs, at most `APPROVE_WAIT`, and never
 for a plan or a question. If you answer in the terminal first, Claude Code
 stops the hook, its lock goes with it, and **yes** goes away from the page.
+A session that the Agent SDK runs (T3 Code) is answered over its own pipe,
+and there Claude Code does not stop the hook. So once the call's result is
+in the transcript, the daemon removes `ASK.wait`, and the hook, which looks
+for that name on every poll, returns without a word (`release_hooks`).
 
 ### One write at a time
 

@@ -193,7 +193,11 @@ buffer, scrubbed, counted; a No, an interrupt, what a refusal says.
   an answer, a No, a review's submit. Jump (`#jump`) and the send box are
   absent with no pane; `paintPicks` once offered submit into no terminal.
   **Reading is not acting**: the question bar stays, and only the press is
-  refused. Grep `whyNotTyped`. `#jump` is hidden by the one `[hidden]`
+  refused. Grep `whyNotTyped`. **A Yes is no key**, so it is offered with no
+  pane (#751): `whyNotAnswered` is `cannot_type` without `in_tmux`, and
+  every option was off for a T3 Code session, Yes too. **The No says on
+  itself why it is off, and where to answer** (`notInTmux`, `runs_in`).
+  `test_a_session_in_no_terminal_is_said_yes_to_and_offers_no_no`. `#jump` is hidden by the one `[hidden]`
   rule (topics/daemon-and-page).
 - **Nothing below a space reaches a terminal.** `tmux_send` strips control
   characters except tab and newline, including the C1 block above `\x7f`
