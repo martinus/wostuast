@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from conftest import event, git_in
+from conftest import bare_event, event, git_in
 from test_serve import get
 
 
@@ -118,13 +118,11 @@ def test_a_snapshot_is_kept_only_for_the_turn_it_names(ws):
     events = [event("SessionStart", ts=1.0),
               event("UserPromptSubmit", prompt="first", ts=2.0),
               event("UserPromptSubmit", prompt="second", ts=3.0),
-              {"session_id": "s1", "hook_event_name": "Snapshot", "ts": 4.0,
-               "turn": "2.000000", "tree": tree, "root": "/w"},
-              {"session_id": "s1", "hook_event_name": "Snapshot", "ts": 4.5,
-               "turn": "3.000000", "tree": "not a tree", "root": "/w"}]
+              # The daemon's own record, as `take_snapshots` writes it: no pane.
+              bare_event("Snapshot", ts=4.0, turn="2.000000", tree=tree, root="/w"),
+              bare_event("Snapshot", ts=4.5, turn="3.000000", tree="not a tree", root="/w")]
     assert ws.build_sessions(events, now=5)[0].turn_starts == []
-    events.append({"session_id": "s1", "hook_event_name": "Snapshot", "ts": 5.0,
-                   "turn": "3.000000", "tree": tree, "root": "/w"})
+    events.append(bare_event("Snapshot", ts=5.0, turn="3.000000", tree=tree, root="/w"))
     started = ws.build_sessions(events, now=6)[0].turn_starts
     assert [(one.n, one.said) for one in started] == [(2, "second")]
 
