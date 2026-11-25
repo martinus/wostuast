@@ -138,8 +138,8 @@ set -o pipefail; python3 -m pytest -q -n auto -rf | tee -a $S/gate.txt | grep -E
 ```
 
 - **Use `python3 -m pytest`, and read the count of passed tests**: another
-  interpreter's `pytest` skips every page test, as an `s` among the dots;
-  `-rs` names them.
+  interpreter's `pytest` skips every page test (`-rs` names them). With no
+  Playwright, make a venv (topics/testing, "Playwright").
 - **Before the push, run what you changed under load; CI runs the rest.**
   A test that fails only under load fails the same way in the changed
   files at `-n 12`. So: the test files you changed, three times at
