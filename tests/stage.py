@@ -321,9 +321,25 @@ def make_spending(ws, transcript: Path, repo: Path) -> None:
         ws.write_status(f"other{n}", ws.Status(ts=time.time(), cost_usd=total, days=days))
 
 
+def make_turns(ws, daemon, repo: Path) -> None:
+    """Two turns, each kept as it began (#749), and a file changed in each:
+    the base picker lists both starts. The second turn still runs."""
+    base = {"session_id": "s1", "cwd": str(repo), "pane": "%7"}
+    for said, path, text in (
+            ("Make the ring refuse a push when it is full.", "docs/notes.md",
+             "# Notes\n\nThe ring refuses a push when it is full.\n"),
+            ("Say why in the header, too.", "ring.h",
+             "/* A push to a full ring is refused: nothing is overwritten. */\n")):
+        ws.append_event({**base, "hook_event_name": "UserPromptSubmit", "prompt": said,
+                         "ts": time.time()})
+        daemon.tick()
+        (repo / path).write_text(text)
+
+
 def serve(home: Path, commands: bool = False, merge: bool = False,
           elsewhere: bool = False, summary: bool = False,
-          fresh: bool = False, moved: bool = False) -> tuple[str, Path]:
+          fresh: bool = False, moved: bool = False,
+          turn: bool = False) -> tuple[str, Path]:
     """A daemon with one session standing in the repository, in `home`."""
     import shutil
 
@@ -370,6 +386,8 @@ def serve(home: Path, commands: bool = False, merge: bool = False,
     threading.Thread(target=server.serve_forever,
                      kwargs={"poll_interval": 0.05}, daemon=True).start()
     daemon.store.refresh()
+    if turn:
+        make_turns(ws, daemon, repo)
     ticking = lambda: [daemon.tick() or time.sleep(0.5) for _ in iter(int, 1)]
     threading.Thread(target=ticking, daemon=True).start()
     return f"http://127.0.0.1:{server.server_address[1]}/#s1", repo
@@ -416,6 +434,8 @@ def main(argv: list[str]) -> int:
     ask.add_argument("--summary", action="store_true")
     ask.add_argument("--fresh", action="store_true")
     ask.add_argument("--moved", action="store_true")
+    # Two turns kept as they began, and the newest picked as the base (#749).
+    ask.add_argument("--turn", action="store_true")
     # One list, so the steps run in the order they were written.
     for flag in ("click", "type", "keys", "eval"):
         ask.add_argument(f"--{flag}", dest="steps", action="append",
@@ -440,7 +460,7 @@ def main(argv: list[str]) -> int:
             json.dumps(json.loads(said.settings)), encoding="utf-8")
     sys.path.insert(0, str(HERE))
     url, _ = serve(home, said.commands, said.merge, said.elsewhere, said.summary,
-                   said.fresh, said.moved)
+                   said.fresh, said.moved, said.turn)
 
     from browser import DRAWN, WAIT, opened, show_tab
     wait = WAIT or 15000
@@ -469,6 +489,10 @@ def main(argv: list[str]) -> int:
                 page.wait_for_function(
                     "(s) => state.diff && state.diff.of === s", arg=sha,
                     timeout=wait)
+            if said.turn:
+                page.evaluate("() => keepBase(state.diff.turns[0].key)")
+                page.wait_for_function("() => state.diff && !!state.diff.turn",
+                                       timeout=wait)
             page.wait_for_selector(".diffscroll .dfile", timeout=wait)
         if said.open:
             page.wait_for_function("(p) => state.files.known.has(p)",

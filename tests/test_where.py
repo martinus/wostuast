@@ -96,7 +96,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # it (topics/principles, 1).
     ("edges", ("the hook's Yes", "transcript", "turn costs", "git facts", "pull requests",
                "idle compaction", "worktree files", "reading a file", "diffs",
-               "bases", "commits and the build", "status line", "our settings.json", "the reader's marks",
+               "bases", "commits and the build", "turn snapshots", "status line", "our settings.json", "the reader's marks",
                "Claude Code's settings.json", "tmux", "slash commands",
                "install and update")),
     # What an event does to a session. `processes` reads /proc, but folds

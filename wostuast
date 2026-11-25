@@ -422,6 +422,12 @@ def approvals_dir() -> Path:
     return state_dir() / "approvals"
 
 
+def snapshots_dir() -> Path:
+    """Where each session keeps the worktree as it was at each turn's start
+    (#749): an index and git objects of wostuast's own, a folder a session."""
+    return state_dir() / "snapshots"
+
+
 def names_path() -> Path:
     """The names the reader gave sessions, all of them in one file.
 
@@ -1328,6 +1334,23 @@ class EventFollower:
 
 
 @dataclass
+class TurnStart:
+    """The worktree as it was when a turn began (#749): a tree in the
+    session's own snapshot store (`take_snapshot`). The Review tab offers
+    it as a base: the diff from it to the files now is "since turn N"."""
+
+    #: The turn's `UserPromptSubmit` moment, as `Session.turn_key` spells it.
+    key: str = ""
+    #: Which prompt of the session it was, counting from 1.
+    n: int = 0
+    #: What began it, cut short: the prompt, or what came in its place.
+    said: str = ""
+    #: The tree, and the worktree it is a tree of.
+    tree: str = ""
+    root: str = ""
+
+
+@dataclass
 class GitFacts:
     """What git says about the directory an agent stands in."""
 
@@ -1622,6 +1645,14 @@ class Session:
     #: session's whole life, idle hours too.
     busy: float = 0.0
     turn_began: float = 0.0
+    #: The last turn that began, kept past its end, unlike `turn_began`:
+    #: which prompt it was, its moment as a key, and what began it. Its
+    #: snapshot finds it by the key (`_on_snapshot`, #749).
+    turns_begun: int = 0
+    turn_key: str = ""
+    turn_said: str = ""
+    #: The turns whose start was kept, oldest first, at most `TURNS_KEPT`.
+    turn_starts: list[TurnStart] = field(default_factory=list)
     #: The last moment the running turn was heard from: where a turn the
     #: reader interrupted ends, as it sends no `Stop`.
     turn_last: float = 0.0
@@ -2971,6 +3002,7 @@ def _on_prompt(session: Session, event: dict[str, Any], ts: float) -> None:
     session.recache_usd, session.recache_tokens = 0.0, 0     # it paid it (#664)
     session.calls.clear()          # a new turn: see `_on_stop`
     by, prompt = prompt_said(event.get("prompt"))
+    turn_begun(session, by, prompt, ts)
     if by == "task":
         session.last_event = clip(prompt, PROMPT_WIDTH)
         return
@@ -3724,6 +3756,10 @@ def end_unlisted_subagents(session: Session, event: dict[str, Any], moment: floa
         str(one.get("id")) for one in tasks if isinstance(one, dict)))
 
 
+def _on_snapshot(session: Session, event: dict[str, Any], ts: float) -> None:
+    keep_turn_start(session, event)
+
+
 def _on_pre_compact(session: Session, event: dict[str, Any], ts: float) -> None:
     trigger = str(event.get("trigger") or "")
     session.last_event = f"context compacted ({trigger})" if trigger else "context compacted"
@@ -3745,6 +3781,7 @@ _HANDLERS: dict[str, Callable[[Session, dict[str, Any], float], None]] = {
     "Declined": _on_declined,
     "Interrupted": _on_interrupted,
     "Approved": _on_approved,
+    "Snapshot": _on_snapshot,      # ours: a turn's start, kept (#749)
     "ModelAsked": _on_model_asked,
     "ModelAnswered": _on_model_answered,
     "Notification": _on_notification,
@@ -5333,11 +5370,14 @@ class CostReader:
 
 
 def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOUT,
-        ok: Sequence[int] = (0,), stdin: bytes | None = None) -> str | None:
+        ok: Sequence[int] = (0,), stdin: bytes | None = None,
+        env: dict[str, str] | None = None) -> str | None:
     """Run a command and return its stdout, unchanged. None on any failure.
 
     `stdin` is what the command reads; without it, the command has the
-    daemon's own, as it always had. `tmux load-buffer -` takes the text of a
+    daemon's own, as it always had. `env` is added to the daemon's
+    environment: a turn's snapshot points git at an index and objects of
+    wostuast's own with it (`snapshot_env`). `tmux load-buffer -` takes the text of a
     send that way (see `tmux_send`).
 
     `ok` is the exit statuses that are an answer. Only 0 by default. A caller
@@ -5368,9 +5408,9 @@ def run(args: Sequence[str], cwd: str | None = None, timeout: float = RUN_TIMEOU
     import subprocess
 
     command = list(args)
-    env = None
+    added, env = env, ({**os.environ, **env} if env else None)
     if command and os.path.basename(str(command[0])) == "git":
-        env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+        env = {**os.environ, **(added or {}), "GIT_OPTIONAL_LOCKS": "0"}
         command[1:1] = ["-c", "core.fsmonitor=false"]
     try:
         done = subprocess.run(
@@ -7366,6 +7406,11 @@ class DiffReport:
     #: "old", all of it because this git cannot say the first (2.36 can).
     #: "" for a commit that is no merge.
     merge: str = ""
+    #: The starts of the session's turns the reader can pick as a base,
+    #: newest first, each `{"key", "label"}` (`turn_bases`, #749); and the
+    #: one shown, or "".
+    turns: list[dict[str, str]] = field(default_factory=list)
+    turn: str = ""
 
 
 #: What git writes after a backslash inside a quoted path. Anything else it
@@ -8020,7 +8065,7 @@ class DiffBuild:
             files = parsed
         self.report.sections.append(
             DiffSection(name=name, title=title, about=about, files=files,
-                        at_commit=name != "uncommitted"))
+                        at_commit=name not in ("uncommitted", "turn")))
         return files
 
 
@@ -8306,6 +8351,222 @@ def whole_file_diff(cwd: str, section: str, path: str, old_path: str = "",
         return found
     found.file = next((each for each in parse_diff(text)
                        if each.path == path), None)
+    return found
+
+
+# --- turn snapshots: the worktree at each turn's start, in wostuast's own git store [topics/git, topics/diff-tab]
+
+
+#: How long after a turn begins its snapshot may still be taken. A daemon
+#: that starts later folds old turns, and the worktree has moved on since:
+#: a snapshot then would be of another moment, under that turn's name.
+SNAPSHOT_LATE = 60.0
+
+#: How long a session's snapshot folder is kept after it was last written.
+SNAPSHOT_KEPT = 14 * 86400.0
+
+#: How many turn starts a session keeps for the base picker.
+TURNS_KEPT = 50
+
+#: A tree's name, as `write-tree` prints it: SHA-1 or SHA-256.
+TREE_SHAPE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
+def turn_begun(session: Session, by: str, prompt: str, ts: float) -> None:
+    """A prompt begins a turn, of every kind, and its snapshot names it so
+    (#749): which prompt of the session, its moment as a key, and what
+    began it. Only a later moment counts: the same events folded again
+    count nothing twice, as `note_busy` holds too."""
+    if ts <= to_float(session.turn_key):
+        return
+    session.turns_begun += 1
+    session.turn_key = f"{ts:.6f}"
+    session.turn_said = clip(("a background task ended" if by == "task"
+                              else "from another session: " + prompt if by == "agent"
+                              else " ".join(typed(prompt).split())), PROMPT_WIDTH)
+
+
+def keep_turn_start(session: Session, event: dict[str, Any]) -> None:
+    """The `Snapshot` record, kept only for the turn it names, and only when
+    that is the last one that began: a record written late, for a turn
+    another has followed, is of another moment (`Daemon.take_snapshots`)."""
+    tree, root = str(event.get("tree") or ""), str(event.get("root") or "")
+    if (event.get("turn") != session.turn_key or not TREE_SHAPE.fullmatch(tree)
+            or not root or any(one.key == session.turn_key for one in session.turn_starts)):
+        return
+    session.turn_starts.append(TurnStart(key=session.turn_key, n=session.turns_begun,
+                                         said=session.turn_said, tree=tree, root=root))
+    del session.turn_starts[:-TURNS_KEPT]
+
+
+def snapshot_home(session_id: str) -> Path:
+    """A session's own index and objects. Named by a hash of its id: the id
+    comes from the log, which any hook writes, and is no path."""
+    import hashlib
+
+    return snapshots_dir() / hashlib.sha256(session_id.encode("utf-8", "replace")).hexdigest()[:24]
+
+
+def snapshot_env(root: str, home: Path,
+                 runner: Callable[..., str | None]) -> dict[str, str] | None:
+    """What points git at the session's own index and objects, the
+    repository's own objects read beside them; None when git cannot say
+    where those are.
+
+    **Nothing is written into the repository** (#749, the reader's choice):
+    no ref, no object, no index. `git add` and `write-tree` write the new
+    blobs and trees into `GIT_OBJECT_DIRECTORY`, ours, and read the ones the
+    repository has through `GIT_ALTERNATE_OBJECT_DIRECTORIES`. A tree is
+    lost only when the repository's gc drops an object no commit, index or
+    ref of its own holds; its diff then fails and says so.
+    """
+    common = runner(["git", "-C", root, "rev-parse", "--path-format=absolute",
+                     "--git-common-dir"])
+    if not common or not common.strip():
+        return None
+    return {"GIT_INDEX_FILE": str(home / "index"),
+            "GIT_OBJECT_DIRECTORY": str(home / "objects"),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": os.path.join(common.rstrip("\n"), "objects")}
+
+
+def take_snapshot(root: str, session_id: str,
+                  runner: Callable[..., str | None] = run) -> str | None:
+    """The worktree as it is now, untracked files too, as a tree in the
+    session's own store; None when git could not make one.
+
+    The index is the session's own and is kept, so the next snapshot hashes
+    only what changed. The first is seeded from the worktree's index, whose
+    stat data says which files are as committed: a copy, never the file. A
+    tree whose blob the repository has since dropped fails `write-tree`,
+    and the index is made again from nothing, once.
+    """
+    import shutil
+
+    home = snapshot_home(session_id)
+    try:
+        private_dir(home)
+        private_dir(home / "objects")
+    except OSError:
+        return None
+    env = snapshot_env(root, home, runner)
+    if env is None:
+        return None
+    index = home / "index"
+    for first in (True, False):
+        if not index.exists() and first:
+            seed = runner(["git", "-C", root, "rev-parse", "--path-format=absolute",
+                           "--git-path", "index"])
+            try:
+                if seed and seed.strip():
+                    shutil.copyfile(seed.rstrip("\n"), index)
+                    os.chmod(index, 0o600)
+            except OSError:
+                pass        # no index yet: `add` reads every file
+        added = runner(["git", "-C", root, "add", "-A"], timeout=DIFF_TIMEOUT, env=env)
+        tree = runner(["git", "-C", root, "write-tree"], env=env) if added is not None else None
+        tree = (tree or "").strip()
+        if TREE_SHAPE.fullmatch(tree):
+            return tree
+        index.unlink(missing_ok=True)
+    return None
+
+
+def prune_snapshots(now: float) -> None:
+    """Take away the snapshot folders nothing has written for
+    `SNAPSHOT_KEPT`. Each snapshot writes its folder's index, so a folder
+    still in use is never old. Never raises."""
+    import shutil
+
+    try:
+        folders = list(snapshots_dir().iterdir())
+    except OSError:
+        return
+    for one in folders:
+        try:
+            if (one.is_dir() and not one.is_symlink()
+                    and now - one.stat().st_mtime > SNAPSHOT_KEPT):
+                shutil.rmtree(one)
+        except OSError:
+            pass
+
+
+def turn_label(session: Session, one: TurnStart) -> str:
+    """How the base picker names a turn's start: the last as "this turn"
+    while it runs, else by its number and what began it."""
+    if session.turn_starts and one is session.turn_starts[-1] and one.key == session.turn_key:
+        return ("the start of this turn" if session.state in ("working", "needs_you")
+                else "the start of the last turn")
+    return clip(f"the start of turn {one.n} \u00b7 {one.said}", PROMPT_WIDTH)
+
+
+def turn_bases(session: Session, root: str) -> list[dict[str, str]]:
+    """The turn starts the base picker offers for this worktree, newest
+    first: only those of it, as a tree of another worktree is no base."""
+    return [{"key": "turn:" + one.key, "label": turn_label(session, one)}
+            for one in reversed(session.turn_starts) if one.root == root]
+
+
+def turn_start(session: Session, base: str, root: str) -> TurnStart | None:
+    """The turn a base from the page names, if this session kept it for
+    this worktree. The page's word is a key to look up, never a tree."""
+    key = base.removeprefix("turn:")
+    return next((one for one in session.turn_starts
+                 if base.startswith("turn:") and one.key == key and one.root == root), None)
+
+
+def turn_diff(session: Session, one: TurnStart, snapping: Any,
+              ranks: dict[Any, Any] | None, space: bool,
+              runner: Callable[..., str | None] = run) -> DiffReport:
+    """Everything that changed since a turn began, to the files now: the
+    turn's tree against a snapshot taken for this answer, so files the
+    agent made and git does not track yet are in it too (#749).
+
+    One half, the disk's: its new side is the files now, as the
+    uncommitted half's is, so a comment stands on the line as it is. The
+    branches are still listed, for the picker beside it.
+    """
+    import functools
+
+    report = DiffReport()
+    choice = pick_base(one.root, runner, "", ranks)
+    report.base_auto, report.bases = choice.detected, choice.offered
+    report.base, report.turn = turn_label(session, one), "turn:" + one.key
+    with snapping:
+        now = take_snapshot(one.root, session.session_id, runner)
+    env = snapshot_env(one.root, snapshot_home(session.session_id), runner)
+    if now is None or env is None:
+        report.failed = True
+        return report
+    build = DiffBuild(one.root, functools.partial(runner, env=env), space, report)
+    build.section("turn", f"since turn {one.n}",
+                  f"what the files on disk hold that they did not when turn {one.n}"
+                  " began, files git does not track yet too", one.tree, now)
+    return report
+
+
+def whole_turn_file(session: Session, one: TurnStart, path: str, old_path: str,
+                    snapping: Any, space: bool,
+                    runner: Callable[..., str | None] = run) -> WholeFile:
+    """One file of a turn's half with every line of it: the same diff as
+    `turn_diff`, with the whole file as context (`whole_file_diff`)."""
+    import functools
+
+    found = WholeFile()
+    with snapping:
+        now = take_snapshot(one.root, session.session_id, runner)
+    env = snapshot_env(one.root, snapshot_home(session.session_id), runner)
+    if not path or now is None or env is None:
+        found.failed = bool(path)
+        return found
+    names = [path] + ([old_path] if old_path and old_path != path else [])
+    text, found.cut = git_diff(one.root, [one.tree, now, *SPACE_ARGS[space],
+                                          f"-U{WHOLE_CONTEXT}", "--",
+                                          *(":(literal)" + name for name in names)],
+                               functools.partial(runner, env=env))
+    if text is None:
+        found.failed = True
+        return found
+    found.file = next((each for each in parse_diff(text) if each.path == path), None)
     return found
 
 
@@ -11292,6 +11553,9 @@ class Daemon:
         #: of a long transcript held back every send, answer and No.
         self.typing_lock = threading.Lock()
         self.reading = threading.Lock()
+        #: One snapshot at a time (#749): the tick's for a turn's start and
+        #: a request's for "now" write the same index.
+        self.snapping = threading.Lock()
         self._init_claims()
         self.stopping = threading.Event()
         self.started = time.time()
@@ -11317,6 +11581,9 @@ class Daemon:
         #: the call of their dialog: kept past the dialog, which the fold
         #: forgets when the row leaves amber (`release_hooks`).
         self.hooks_held: dict[str, tuple[str, str]] = {}
+        #: The turns a snapshot was tried for, with when: tried once.
+        self.snapped: dict[tuple[str, str], float] = {}
+        self.pruned_at = 0.0
 
     def session(self, session_id: str) -> Session | None:
         return self.store.sessions.get(session_id)
@@ -11602,6 +11869,43 @@ class Daemon:
             wrote = True
         return wrote
 
+    def take_snapshots(self) -> bool:
+        """Keep the worktree as it is when a turn begins (#749): a tree in
+        the session's own store, and a `Snapshot` record naming it, which
+        the fold keeps (`_on_snapshot`). True when one was written.
+
+        Only within `SNAPSHOT_LATE` of the prompt: the first fold of a
+        daemon that starts later holds old turns, and the worktree has
+        moved on. A turn that ran while no daemon did has none. The agent's
+        first edit comes after a reply from the API, seconds after the
+        prompt; this comes a tick after it.
+        """
+        now, wrote = time.time(), False
+        for key, at in list(self.snapped.items()):
+            if now - at > SNAPSHOT_LATE:
+                del self.snapped[key]
+        if now - self.pruned_at > 3600:
+            self.pruned_at = now
+            prune_snapshots(now)
+        for session in list(self.store.sessions.values()):
+            key = session.turn_key
+            if (not key or (session.session_id, key) in self.snapped
+                    or now - to_float(key) > SNAPSHOT_LATE
+                    or any(one.key == key for one in session.turn_starts)):
+                continue
+            self.snapped[(session.session_id, key)] = now
+            root = session.git.root or worktree_root(session.home or session.cwd, run)
+            if not root:
+                continue
+            with self.snapping:
+                tree = take_snapshot(root, session.session_id)
+            if tree:
+                append_event({"session_id": session.session_id,
+                              "hook_event_name": "Snapshot", "ts": time.time(),
+                              "turn": key, "tree": tree, "root": root})
+                wrote = True
+        return wrote
+
     def release_hooks(self) -> None:
         """Let a waiting hook go once its dialog was answered where it cannot
         hear it (#751).
@@ -11744,6 +12048,8 @@ class Daemon:
         if self.declined_in_terminal():
             moved = self.store.refresh() or moved
         self.release_hooks()
+        if self.take_snapshots():
+            moved = self.store.refresh() or moved
         if self.model_answered():
             moved = self.store.refresh() or moved
         if self.interrupted_in_terminal():
@@ -13108,11 +13414,19 @@ def verb_diff(serving: Serving, session_id: str, session: Session,
                             "sections": [], "untracked": []})
         return
     place = at[0]
-    report = worktree_diff(place, of=of, base=base,
-                           ranks=serving.daemon.ranks, held=serving.daemon.diffs,
-                           root=serving.daemon.files.root_of(place, run),
-                           space=query.get("space", "") == "hide",
-                           merged_all=query.get("merge", "") == "all")
+    # A turn's start, picked as the base (#749): only one this session kept
+    # for this worktree. Any other `turn:` is a branch nobody has.
+    root = serving.daemon.files.root_of(place, run)
+    turn = turn_start(session, base, root or "")
+    if turn:
+        report = turn_diff(session, turn, serving.daemon.snapping, serving.daemon.ranks,
+                           query.get("space", "") == "hide")
+    else:
+        report = worktree_diff(place, of=of, base=base,
+                               ranks=serving.daemon.ranks, held=serving.daemon.diffs,
+                               root=root, space=query.get("space", "") == "hide",
+                               merged_all=query.get("merge", "") == "all")
+    report.turns = turn_bases(session, root or "")
     # The tab asks every five seconds, and the answer is the whole diff:
     # on a slow link the one transfer that never stopped. The page sends
     # back the tag of the answer it holds, and one that still stands is
@@ -13140,6 +13454,12 @@ def verb_whole(serving: Serving, session_id: str, session: Session,
     if at is None or at[1]:
         return 404, {"error": NOT_A_REPOSITORY if at else NOT_A_PLACE}
     place = at[0]
+    turn = turn_start(session, query.get("base", ""),
+                      serving.daemon.files.root_of(place, run) or "")
+    if turn and query.get("section", "") == "turn":
+        return 200, wire_fields(whole_turn_file(
+            session, turn, query.get("path", ""), query.get("old", ""),
+            serving.daemon.snapping, query.get("space", "") == "hide"), id=session_id)
     found = whole_file_diff(place, query.get("section", ""),
                             query.get("path", ""), query.get("old", ""),
                             query.get("of", ""), base=query.get("base", ""),
@@ -14133,6 +14453,9 @@ def installed_files() -> list[Installed]:
                   "held while wostuast serves the page; says where"),
         Installed("History", approvals_dir(),
                   "where a permission dialog's hook waits for your Yes from the page"),
+        Installed("History", snapshots_dir(),
+                  "each session's worktree as it was when each turn began, for the"
+                  " Review tab; a folder goes two weeks after its last turn"),
         Installed("Your settings", config_path(),
                   "what the settings menu sets, and your ticket links"),
     ]
@@ -26128,6 +26451,49 @@ function stepCommit(by) {
   if (at >= 0 && next) pickDiff(next.sha);
 }
 
+// The base picker: the branches, and the starts of the session's turns
+// (#749). A turn as the base hides the commit picker and the stepper.
+function paintBasePick(bar, report, pick) {
+  // The same guard as the commit picker: a `select` refilled under the hand
+  // closes if it is open, and the tab polls.
+  const base = bar.querySelector(".pickbase");
+  const offered = report.bases || [];
+  const turns = report.turns || [];
+  const wanted = recallBase();
+  if (fresh(bar, "baseKey", [report.base_auto || "", wanted, ...offered,
+                             ...turns.map((one) => one.key + " " + one.label)].join("\n"))) {
+    base.replaceChildren();
+    const option = (value, text) => {
+      const one = put(base, "option", null, text);
+      one.value = value;
+    };
+    option("", report.base_auto ? report.base_auto + " (found)"
+                                : "no branch to compare against");
+    for (const name of offered) {
+      if (name !== report.base_auto) option(name, name);
+    }
+    // The starts of this session's turns (#749): the diff from one to the
+    // files now is "since turn N", and the newest is "this turn".
+    if (turns.length) {
+      const group = put(base, "optgroup");
+      group.label = "turns of this session";
+      for (const one of turns) put(group, "option", null, one.label).value = one.key;
+    }
+    // Picked, and not on the list any more: said, rather than silently
+    // shown as the one found. A turn of another session is gone here too.
+    if (wanted && !offered.includes(wanted) && !turns.some((one) => one.key === wanted)) {
+      option(wanted, (wanted.startsWith("turn:") ? "a turn" : wanted) + " (gone)");
+    }
+  }
+  base.value = wanted;
+  base.hidden = !offered.length && !turns.length && !wanted;
+  bar.querySelector(".baseword").hidden = base.hidden;
+  // Against a turn's start there is one half, to the files now, and no
+  // commit to pick or step through.
+  pick.hidden = !!report.turn;
+  bar.querySelector(".stepper").hidden = !!report.turn;
+}
+
 function fillDiffBar(bar) {
   const report = state.diff || {};
   // A folder with no git (#624) has no commits, base or columns to pick.
@@ -26170,29 +26536,7 @@ function fillDiffBar(bar) {
     }
   }
   pick.value = state.diffs.of;
-  // The same guard as the commit picker: a `select` refilled under the hand
-  // closes if it is open, and the tab polls.
-  const base = bar.querySelector(".pickbase");
-  const offered = report.bases || [];
-  const wanted = recallBase();
-  if (fresh(bar, "baseKey", [report.base_auto || "", wanted, ...offered].join("\n"))) {
-    base.replaceChildren();
-    const option = (value, text) => {
-      const one = put(base, "option", null, text);
-      one.value = value;
-    };
-    option("", report.base_auto ? report.base_auto + " (found)"
-                                : "no branch to compare against");
-    for (const name of offered) {
-      if (name !== report.base_auto) option(name, name);
-    }
-    // Picked, and not on the list any more: said, rather than silently
-    // shown as the one found.
-    if (wanted && !offered.includes(wanted)) option(wanted, wanted + " (gone)");
-  }
-  base.value = wanted;
-  base.hidden = !offered.length && !wanted;
-  bar.querySelector(".baseword").hidden = base.hidden;
+  paintBasePick(bar, report, pick);
   const at = commitAt(commits);
   const [older, newer] = bar.querySelectorAll(".step");
   older.disabled = at < 0 || at + 1 >= commits.length;
@@ -27686,7 +28030,7 @@ async function fetchWhole(one, section) {
     // The base this diff was drawn against, not the pick: with nothing
     // picked the daemon would find one again, and a different answer would
     // be a whole file against another base, drawn between these hunks.
-    base: (state.diff && state.diff.base) || "",
+    base: (state.diff && (state.diff.turn || state.diff.base)) || "",
     // The same whitespace as the hunks it goes between, and the same
     // diff of a merge (#621).
     space: spaceHidden() ? "hide" : "", merge: state.diffs.merge }));

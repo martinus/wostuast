@@ -120,6 +120,18 @@ def test_it_draws_a_commit_with_a_review_and_a_click(tmp_path):
 
 
 @skip_without_browser
+def test_it_draws_the_diff_since_a_turn_began(tmp_path):
+    """`--turn`: two turns kept as they began (#749), the newest picked."""
+    out = tmp_path / "out.png"
+    done = subprocess.run(
+        [sys.executable, str(HERE / "stage.py"), str(out), "--turn",
+         "--part", ".diffhead.turn"],
+        capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+@skip_without_browser
 def test_it_draws_a_file_on_the_files_tab(tmp_path):
     """Not PLAN.md, which the tab opens by itself."""
     out = tmp_path / "out.png"

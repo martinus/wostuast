@@ -16,6 +16,21 @@ diff.
   the index anyway** when a stat moved and the bytes did not, so `git_diff`
   also sets `diff.autoRefreshIndex=false`.
   `test_git_never_takes_the_index_lock_the_agent_needs`.
+- **The daemon's one git write goes into its own store, never into the
+  repository** (#749, `take_snapshot`, `snapshot_env`): a turn's snapshot
+  is `add -A` and `write-tree` with `GIT_INDEX_FILE` and
+  `GIT_OBJECT_DIRECTORY` in `snapshots/<hash of the session>/`, the
+  repository's objects read through `GIT_ALTERNATE_OBJECT_DIRECTORIES`.
+  The reader chose it over hidden refs: no ref, no object and no index of
+  the repository changes, and pruning deletes our own folders
+  (`prune_snapshots`, `SNAPSHOT_KEPT`). **The index is kept, seeded once
+  from a copy of the worktree's**, so a snapshot hashes only what changed;
+  a blob the repository's gc dropped fails `write-tree`, and the index is
+  made again from nothing, once. **Every snapshot goes through
+  `Daemon.snapping`**: the tick's and a request's write one index.
+  `test_a_turn_start_is_kept_and_nothing_is_written_into_the_repository`,
+  `test_a_snapshot_survives_a_blob_the_repository_dropped`,
+  `test_a_snapshot_folder_nothing_wrote_for_two_weeks_goes`.
 - **The daemon's git runs no fsmonitor** (#616): `run` adds `-c
   core.fsmonitor=false` to every git. A repository's own config can name a
   command that `status` and `ls-files` run, and the daemon ran it outside

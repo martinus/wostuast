@@ -13,6 +13,9 @@ Choices, not lessons from a bug. Weigh the reason before undoing one.
 - **Listen to both events that announce a permission dialog.**
   `Notification` comes up to twelve seconds after `PermissionRequest`; the
   row read `working` with the dialog up.
+- **The daemon takes a turn's snapshot, not the hook** (#749, the reader's
+  choice): the hook stays free of git and never waits on `add -A` of a
+  large worktree. A turn that runs while no daemon does has none.
 - **Never guess what no hook reports.** Nothing fires on a Yes or a No, so
   an approved `cmake --build` stays amber until its `PostToolUse`; the pane
   settles it. **The one record of our own is `Declined`**, proved by the

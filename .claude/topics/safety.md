@@ -370,7 +370,10 @@ path may reach. The rest: topics/safety-typing, topics/safety-install.
   executes or navigates to.
 - **The state directory is private**: `0700` dirs, `0600` files, `0600`
   **at creation** via `open_private`; a later `chmod` leaves a window onto
-  every prompt. **Every command makes it via `private_dir`**; `doctor` and
+  every prompt. **`snapshots/` holds copies of worktree files** (#749):
+  every untracked file git does not ignore, a `.env` too. `take_snapshot`
+  makes its folders with `private_dir`, and names each by a hash of the
+  session id, which comes from the log and is no path. **Every command makes it via `private_dir`**; `doctor` and
   the start ask `state_dir_trouble`. A bare `mkdir` in `doctor` left it
   0755 (#285). `test_doctor_makes_the_state_directory_private`.
 - **A `flock` is on an inode, not on a name**: rotated between open and
