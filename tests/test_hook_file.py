@@ -65,7 +65,10 @@ def test_a_remote_control_worker_is_the_agent_under_its_version_name(ws, tmp_pat
     worker = versions / "2.1.287"
     shutil.copy(sys.executable, worker)
     home = os.path.dirname(os.path.realpath(sys.executable))
-    (versions / "pyvenv.cfg").write_text(f"home = {home}\n")
+    # One folder up, as a venv's `bin/python` has it: beside the worker,
+    # Python 3.15 warned on stderr that the prefix was not what it expected
+    # (#754), and every Python looks in both places.
+    (versions.parent / "pyvenv.cfg").write_text(f"home = {home}\n")
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path),
            "WOSTUAST_STATE": str(tmp_path / "state"), "TMUX_PANE": "%3"}
     folder = tmp_path / "stand-in"

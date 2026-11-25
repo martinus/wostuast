@@ -19,7 +19,9 @@ shows it.
 - **The required checks are named one by one: change the matrix, change
   the ruleset.** A Python version added to `tests.yml` is not required
   until the ruleset names it; one taken out leaves the ruleset waiting for
-  a check that never reports, and nothing merges.
+  a check that never reports, and nothing merges. **Test the newest Python
+  too**: 3.15 warned on stderr where 3.13 did not, and a test of the hook's
+  silence was red on a machine alone (#754).
   - **The `browser` job exists so the browser shards can change without
     the ruleset.** It runs nothing, needs the shards, and reports under the
     name the rule asks for. It carries `if: always()`: a job its `needs`

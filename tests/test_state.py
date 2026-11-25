@@ -384,7 +384,10 @@ def test_the_agent_pid_walks_past_the_shell(ws, tmp_path):
     (tmp_path / "outer.py").write_text(
         "import os, subprocess, sys\n"
         "print('CLAUDE', os.getpid(), flush=True)\n"
-        "subprocess.run(['sh', '-c', sys.argv[1] + ' ' + sys.argv[2]], env=os.environ)\n"
+        # A command after it, or bash, which is `sh` on Fedora, execs the
+        # one command and leaves no shell to walk past (#754); dash keeps it.
+        "subprocess.run(['sh', '-c', sys.argv[1] + ' ' + sys.argv[2] + '; exit $?'],"
+        " env=os.environ)\n"
     )
     claude = tmp_path / "claude"
     claude.symlink_to(sys.executable)
