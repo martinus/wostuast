@@ -109,9 +109,12 @@ def test_a_break_that_hangs_a_test_is_put_back_and_said(tmp_path):
     (tmp_path / "test_hang.py").write_text(HANG)
     done = run(tmp_path, [{"name": "hangs", "file": "mod.py",
                            "old": "return 1", "new": "return 2",
-                           "tests": ["test_hang.py"], "timeout": 2}])
+                           # Not 2 s: pytest alone took 4 s to start on a
+                           # Python with many plugins, and the run stopped
+                           # before the break as hung already (#754).
+                           "tests": ["test_hang.py"], "timeout": 15}])
     assert done.returncode == 1
-    assert "HUNG   past 2 s" in done.stdout, done.stdout + done.stderr
+    assert "HUNG   past 15 s" in done.stdout, done.stdout + done.stderr
     assert (tmp_path / "mod.py").read_text() == MODULE
 
 

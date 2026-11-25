@@ -17,6 +17,14 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
+# git reads no config of the machine's (#754): CI's runner has none, and the
+# owner's `rebase.updateRefs` made git refuse `rebase --apply`, so a test
+# was red on one machine alone. Every git a test runs, and every git the
+# daemon under test runs, inherits this; a test that wants a setting writes
+# it into its own repository.
+os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
+os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+
 
 def _load_module():
     """Import the `wostuast` script, which has no .py suffix."""
