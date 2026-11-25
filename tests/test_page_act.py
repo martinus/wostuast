@@ -1244,18 +1244,19 @@ BUILD = ("cmake --build build -j && "
          + " && ".join(f"ctest -R case{n} --output-on-failure" for n in range(12)))
 
 
-def now_permission(ws, daemon, calls=("toolu_b1",), pane="%7", ask=""):
+def now_permission(ws, daemon, calls=("toolu_b1",), pane="%7", ask="", **more):
     """A real dialog's events: its call starting, then the request 90 ms on.
     Two calls reading the same leave the dialog with no call of its own.
-    `ask` is the nonce a hook that waits for a Yes writes."""
+    `ask` is the nonce a hook that waits for a Yes writes; `more` goes on
+    every event, as the hook's own fields do."""
     at = time.time()
     shown = {"command": BUILD, "description": "Build and test"}
     cwd = daemon.store.sessions["s1"].cwd
     for call in calls:
         ws.append_event(conftest.event("PreToolUse", tool_name="Bash",
                                        tool_input=shown, pane=pane, cwd=cwd,
-                                       tool_use_id=call, ts=at))
-    extra = {"ask_id": ask} if ask else {}
+                                       tool_use_id=call, ts=at, **more))
+    extra = dict(more, **({"ask_id": ask} if ask else {}))
     ws.append_event(conftest.event("PermissionRequest", tool_name="Bash",
                                    tool_input=shown, pane=pane, cwd=cwd,
                                    ts=at + 0.09, **extra))
@@ -1369,6 +1370,43 @@ def test_yes_shows_while_the_hook_waits_and_goes_to_it(ws, in_pane, monkeypatch)
         assert seen == [], "a Yes pressed keys"
         daemon.tick()
         page.wait_for_selector("#asking", state="hidden")
+
+
+def test_a_session_in_no_terminal_is_said_yes_to_and_offers_no_no(ws, in_pane, monkeypatch):
+    """A session T3 Code runs through the Agent SDK has no pane (#751). Its
+    Yes goes to the hook, not into a pane, so it is offered and works; the
+    No is Escape into a pane, so it stands disabled, and says where to
+    answer instead. Every option was off, Yes too: `whyNotTyped` refused
+    the whole bar for want of a pane."""
+    daemon, base, seen = in_pane
+    monkeypatch.setattr(ws, "APPROVE_WAIT", 30)
+    ask = "00aa11bb22cc33df"
+    now_permission(ws, daemon, pane="", ask=ask, entrypoint="t3-code")
+    took = []
+    t3 = "this session runs in T3 Code, not in tmux: nothing can be pressed from here"
+    with opened((None, base)) as page:
+        # No hook waits yet: nothing on the bar can be given, and it says why.
+        page.wait_for_selector("#asking:not([hidden]) .permno")
+        assert page.locator("#asking .permno").is_disabled()
+        assert page.inner_text("#asking .permsend .asksays") == t3
+        hook = threading.Thread(target=lambda: took.append(ws.wait_for_yes(ask)),
+                                daemon=True)
+        hook.start()
+        wait_until(page, lambda: ws.hook_waits(ask))
+        daemon.tick()
+        page.wait_for_selector("#asking .permyes:not([hidden])")
+        assert not page.locator("#asking .permyes").is_disabled()
+        assert page.locator("#asking .permno").is_disabled()
+        assert page.inner_text("#asking .permno .askwhy") == "a key press: give it in T3 Code"
+        assert page.inner_text("#asking .permsend .asksays") == "pick an answer"
+        assert page.locator("#asking .permsend .verb.quiet").count() == 0, \
+            "a terminal to open, for a session in none"
+        page.click("#asking .permyes")
+        assert page.inner_text("#asking .permsend .asksays") == "allows this one call, once"
+        page.click("#asking .permsubmit")
+        hook.join(10)
+        assert took == [ask]
+        assert seen == [], "a Yes pressed keys"
 
 
 def test_yes_and_dont_ask_again_is_a_choice_of_its_own(ws, in_pane, monkeypatch):

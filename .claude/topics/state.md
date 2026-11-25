@@ -298,6 +298,12 @@ dialog, `/clear`, attention, pids and panes.
     worker is found by its executable** (`looks_like_claude`): it runs as
     `~/.local/share/claude/versions/<version>`, so `agent_pid` passed over
     it. `/proc/<pid>/exe` in a `claude/versions` folder is Claude Code.
+    **`entrypoint` names, it never decides** (#751): the hook writes
+    `CLAUDE_CODE_ENTRYPOINT` on every event, the fold takes it as the pane,
+    and the row's `runs_in` says "T3 Code" only with no pane and only for
+    a name in `RUNS_IN`. Anything else is plain "not in tmux", true of
+    every session with no pane.
+    `test_a_session_in_no_pane_says_what_runs_it_if_that_is_known`.
     `test_an_agent_that_reads_no_terminal_has_no_pane`,
     `test_reads_terminal_says_yes_unless_it_can_tell_no`,
     `test_a_remote_control_worker_is_the_agent_under_its_version_name`.

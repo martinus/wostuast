@@ -280,7 +280,7 @@ def hook_at(ws, tmp_path):
         fcntl.flock(lock, fcntl.LOCK_EX)
         held.append(lock)
 
-    def start(tool: str = "Bash", suggestions=None, **extra) -> subprocess.Popen:
+    def start(tool: str = "Bash", suggestions=None, runs=None, **extra) -> subprocess.Popen:
         payload = json.dumps(conftest.bare_event("PermissionRequest", tool_name=tool,
                                                  tool_input={"command": "rm -rf build"},
                                                  permission_suggestions=suggestions or [],
@@ -288,7 +288,8 @@ def hook_at(ws, tmp_path):
         child = subprocess.Popen([str(folder / "claude"), str(folder / "stand_in.py"),
                                   "terminal", str(path)], stdin=subprocess.PIPE,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                 text=True, env=env, start_new_session=True)
+                                 text=True, env=dict(env, **(runs or {})),
+                                 start_new_session=True)
         child.stdin.write(payload)
         child.stdin.close()
         return child
@@ -401,3 +402,78 @@ def test_a_hook_stopped_by_the_terminal_says_nothing(ws, hook_at):
     os.killpg(child.pid, signal.SIGTERM)
     assert finish(child)[1] == ""
     assert not ws.hook_waits(logged_ask(ws))
+
+
+def test_a_hook_whose_file_the_daemon_took_away_says_nothing(ws, hook_at):
+    """The daemon takes `<ask>.wait` away once the dialog closed where the
+    hook cannot hear it (#751): the hook returns at once, silent, and does
+    not sleep out `APPROVE_WAIT`."""
+    daemon, start = hook_at
+    daemon()
+    child = start()
+    assert until(lambda: logged_ask(ws) and ws.hook_waits(logged_ask(ws)))
+    (ws.approvals_dir() / f"{logged_ask(ws)}.wait").unlink()
+    assert finish(child) == (0, "", "")
+
+
+def test_the_hook_says_what_runs_the_agent(ws, hook_at):
+    """Claude Code's `CLAUDE_CODE_ENTRYPOINT` goes into every line, as the
+    pane does: no payload field says that T3 Code runs a session (#751)."""
+    daemon, start = hook_at
+    finish(start(runs={"CLAUDE_CODE_ENTRYPOINT": "t3-code"}))
+    assert list(ws.read_events())[-1]["entrypoint"] == "t3-code"
+    finish(start())
+    assert list(ws.read_events())[-1]["entrypoint"] == ""
+
+
+def test_a_session_in_no_pane_says_what_runs_it_if_that_is_known(ws):
+    """Only a name `RUNS_IN` knows is said, and only with no pane: in a pane
+    the keys reach it, and an unknown runner gets the plain "not in tmux"."""
+    def runs_in(*events):
+        return ws.row(ws.build_sessions(list(events), now=110)[0])["runs_in"]
+
+    start = event("SessionStart", pane="", pid=1, ts=100, entrypoint="t3-code")
+    assert runs_in(start) == "T3 Code"
+    assert runs_in(dict(start, entrypoint="sdk-ts")) == ""
+    assert runs_in(dict(start, pane="%7")) == ""
+    # A resume by something that names itself not at all says so too: an
+    # empty entrypoint is news, as an empty pane is.
+    assert runs_in(start, event("UserPromptSubmit", pane="", pid=1, ts=105,
+                                entrypoint="", prompt="go")) == ""
+
+
+def test_a_hook_is_let_go_once_its_call_has_a_result(ws, served, transcript_file):
+    """Under the Agent SDK, Claude Code does not stop the hook when T3 Code
+    answers the dialog (measured, 2.1.330): it slept out `APPROVE_WAIT`.
+    The call's result in the transcript is the proof the dialog closed, and
+    then the daemon lets the hook go. Not before: with no result, it waits."""
+    daemon, base = served
+    path = transcript_file("s1", [])
+    now = time.time()
+    for one in (event("SessionStart", pane="", pid=1, ts=now - 10,
+                      transcript_path=str(path), entrypoint="t3-code"),
+                event("PreToolUse", tool_name="Bash", tool_use_id="toolu_p1",
+                      tool_input={"command": "make"}, pane="", ts=now - 5),
+                event("PermissionRequest", tool_name="Bash", ask_id=ASK,
+                      tool_input={"command": "make"}, pane="", ts=now - 4.9)):
+        ws.append_event(one)
+    path.write_text(conftest.records(conftest.record("tool", "make", tool_id="toolu_p1")))
+    took = []
+    hook = threading.Thread(target=lambda: took.append(ws.wait_for_yes(ASK)), daemon=True)
+    hook.start()
+    try:
+        assert until(lambda: ws.hook_waits(ASK)), "the hook never took its lock"
+        daemon.tick()
+        daemon.tick()
+        assert hook.is_alive() and ws.hook_waits(ASK), "let go with no proof"
+        with path.open("a") as out:
+            out.write(conftest.records(conftest.record("result", "built", tool_id="toolu_p1")))
+        daemon.tick()
+        hook.join(5)
+        assert took == [""], took
+        assert not hook.is_alive()
+        assert daemon.hooks_held == {}
+    finally:
+        if hook.is_alive():
+            (ws.approvals_dir() / f"{ASK}.yes").write_text(ASK, encoding="utf-8")
+            hook.join(5)

@@ -122,13 +122,33 @@ suggestion as `updatedPermissions` did what option 2 does: it wrote
 next `npm test` was not asked. The CLI's "Yes, and switch to auto mode" is no
 suggestion.
 
-The hook adds fields of its own: `ts`, `pane`, `pid`, `shell_pid`, and
+The hook adds fields of its own: `ts`, `pane`, `pid`, `shell_pid`,
+`entrypoint` -- Claude Code's `CLAUDE_CODE_ENTRYPOINT`, `t3-code` for a
+session T3 Code runs, `cli` at a terminal (#751) -- and
 `started_by` -- the pid of the agent that ran this one, for an agent that
 reads no terminal, else 0 (#422). On `SessionStart` only, also
 `background` -- the agent runs in Claude Code's background daemon -- and
 `moved_from`, the session such an agent carries on, or "" (see "A
 conversation moved to the background"). On a `PermissionRequest` the page
 may say Yes to, `ask_id`: the nonce its hook waits on (`wait_for_yes`).
+
+### A dialog under the Agent SDK
+
+Measured on 2.1.330 (#751), with `claude --input-format stream-json
+--output-format stream-json --permission-prompt-tool=stdio` in default
+mode, as T3 Code runs it, against `claude_pane.FakeApi`. No payload field
+says a session runs so; T3 Code's sessions carry `permission_mode` and
+`pane: ""` like any other. The `PermissionRequest` hook starts at the same
+moment as the SDK's `control_request` `can_use_tool`, and the call waits
+for whichever answers first:
+
+- **The SDK first** (a `control_response`, allow or deny): the call runs or
+  is refused at once, and **the hook is not stopped**. It ran on for its
+  own sleep, with no signal. An allow it printed later changed nothing: a
+  refused call stayed refused, and nothing ran.
+- **The hook first** (its allow): the call runs, and the SDK gets a
+  `control_cancel_request` for its `can_use_tool`, so T3 Code can take its
+  prompt down. A deny the SDK sent later changed nothing.
 
 ### What an agent starts
 
